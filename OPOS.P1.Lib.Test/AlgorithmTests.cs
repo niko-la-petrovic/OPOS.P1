@@ -110,8 +110,8 @@ namespace OPOS.P1.Lib.Test
             var chart = Chart2D.Chart.Line<double, double, string>(x: x, y: signalPart.ToArray());
             chart
                 .WithTraceName($"Parsed signal from {InputMonoFilePath}", true)
-                .WithXAxisStyle(title: Title.init("Sample index"), ShowGrid: false, ShowLine: true)
-                .WithYAxisStyle(title: Title.init("Amplitude"), ShowGrid: false, ShowLine: true)
+                .WithXAxisStyle(title: Title.init("Sample index"), ShowGrid: true, ShowLine: true)
+                .WithYAxisStyle(title: Title.init("Amplitude"), ShowGrid: true, ShowLine: true)
                 .Show();
 
             SaveChart(inputFile, "signal", chart);
@@ -183,8 +183,8 @@ namespace OPOS.P1.Lib.Test
         private void SaveFftResults(string inputFile, string variant, GenericChart.GenericChart chart)
         {
             chart
-                            .WithTraceName($"Spectral components from {inputFile} [{variant}]", true)
-                            .WithXAxisStyle(title: Title.init("Frequency"), ShowGrid: false, ShowLine: true)
+                .WithTraceName($"Spectral components from {inputFile} [{variant}]", true)
+                            .WithXAxisStyle(title: Title.init("Frequency"), ShowGrid: true, ShowLine: true)
                             .WithYAxisStyle(title: Title.init("Magnitude"), ShowGrid: true, ShowLine: true)
                             .Show();
 
