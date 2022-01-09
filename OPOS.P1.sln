@@ -13,6 +13,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "OPOS.P1.WinForms", "OPOS.P1
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AR.P2.Algo", "..\AR.P2\AR.P2.Algo\AR.P2.Algo.csproj", "{831DA98F-BAEF-4BCE-B879-731E39A43076}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AR.P2.Manager", "..\AR.P2\AR.P2.Manager\AR.P2.Manager.csproj", "{F2C60336-5C67-4706-BD56-6814A6AFE78F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -39,6 +41,10 @@ Global
 		{831DA98F-BAEF-4BCE-B879-731E39A43076}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{831DA98F-BAEF-4BCE-B879-731E39A43076}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{831DA98F-BAEF-4BCE-B879-731E39A43076}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F2C60336-5C67-4706-BD56-6814A6AFE78F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F2C60336-5C67-4706-BD56-6814A6AFE78F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F2C60336-5C67-4706-BD56-6814A6AFE78F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F2C60336-5C67-4706-BD56-6814A6AFE78F}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

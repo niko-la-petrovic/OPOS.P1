@@ -186,11 +186,11 @@ namespace OPOS.P1.Fs.Lib
         private Func<long> totalMemory = () => 0;
         private Func<long> freeMemory = () => 0;
 
-        public event EventHandler<FileOperationEvent> OnFileCopy;
+        public event EventHandler<FileOperationEvent> OnFileWrite;
 
-        protected virtual void OnCopyOccurred(FileOperationEvent e)
+        protected virtual void OnWriteOccurred(FileOperationEvent e)
         {
-            OnFileCopy?.Invoke(this, e);
+            OnFileWrite?.Invoke(this, e);
         }
 
         public FileSystem(Func<long> getTotalMemory, Func<long> getFreeMemory)
@@ -235,21 +235,28 @@ namespace OPOS.P1.Fs.Lib
 
         public void Cleanup(string filePath, IDokanFileInfo info)
         {
-            var item = GetFsItem(filePath);
-
-            (info as IDisposable)?.Dispose();
+            ClearContext(filePath, info);
 
             if (info.DeleteOnClose)
+            {
+                var item = GetFsItem(filePath);
                 item?.Parent?.Remove(item);
+            }
         }
 
         public void CloseFile(string fileName, IDokanFileInfo info)
         {
+            ClearContext(fileName, info);
+        }
+
+        private void ClearContext(string fileName, IDokanFileInfo info)
+        {
             if (info.Context is FileOperationEvent fileOperationEvent)
             {
-                OnFileCopy?.Invoke(this, fileOperationEvent);
+                OnFileWrite?.Invoke(this, fileOperationEvent);
             }
-            (info.Context as IDisposable)?.Dispose();
+
+            (info as IDisposable)?.Dispose();
             info.Context = null;
         }
 
@@ -287,7 +294,6 @@ namespace OPOS.P1.Fs.Lib
 
                 if (!isDirectory)
                 {
-                    info.Context = existingChild;
                     if (mode is FileMode.OpenOrCreate or FileMode.Create)
                         return DokanResult.AlreadyExists;
                     else if (mode is FileMode.Open)
@@ -446,7 +452,7 @@ namespace OPOS.P1.Fs.Lib
         public NtStatus GetFileSecurity(string fileName, out FileSystemSecurity security, AccessControlSections sections, IDokanFileInfo info)
         {
             security = null;
-            return NtStatus.Success;
+            return NtStatus.NotImplemented;
             // TODO implement
         }
 
@@ -515,9 +521,12 @@ namespace OPOS.P1.Fs.Lib
                 return NtStatus.Error;
             }
 
-            int toRead = (int)Math.Min(item.Size - offset, buffer.Length);
-            item.Data.AsSpan().Slice((int)offset, toRead).CopyTo(buffer.AsSpan());
-            bytesRead = toRead;
+            lock (item.Data)
+            {
+                int toRead = (int)Math.Min(item.Size - offset, buffer.Length);
+                item.Data.AsSpan().Slice((int)offset, toRead).CopyTo(buffer.AsSpan());
+                bytesRead = toRead;
+            }
 
             return NtStatus.Success;
         }
@@ -600,9 +609,10 @@ namespace OPOS.P1.Fs.Lib
                     newData = file.Data.Take((int)offset).Concat(buffer).ToArray();
                     fileOpEvent.Operation = FileOperations.Write;
                 }
+
                 file.Data = newData;
+                bytesWritten = buffer.Length;
             }
-            bytesWritten = buffer.Length;
             file.LastAccessTime = DateTime.Now;
             file.LastWriteTime = DateTime.Now;
 

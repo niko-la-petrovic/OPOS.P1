@@ -42,14 +42,18 @@ namespace OPOS.P1.WinForms
                 getFreeMemory: getFreeMemory
                 );
 
-            fileSystem.OnFileCopy += (s, e) =>
+            fileSystem.OnFileWrite += (s, e) =>
             {
-                string fileName = e.File.Name;
-                //if (Path.GetExtension(fileName) == ".wav")
-                //{
+                Task.Run(() =>
+                {
+                    string fileName = e.File.Name;
+                    //if (Path.GetExtension(fileName) == ".wav")
+                    //{
 
-                //}
-                MessageBox.Show(fileName);
+                    //}
+                    MessageBox.Show(fileName);
+
+                });
             };
 
             string fsMountPoint = @"b:\";
@@ -64,8 +68,8 @@ namespace OPOS.P1.WinForms
             System.IO.Directory.CreateDirectory(inputFolder);
             System.IO.Directory.CreateDirectory(outputFolder);
 
-            //System.IO.File.Copy(@"G:\downloads\output1.txt", @"B:\input\output1.txt");
-            System.IO.File.Copy(@"G:\downloads\f5982351-8fe4-4a9f-b371-b0a0bee55823-results.txt", @"b:\input\f5982351-8fe4-4a9f-b371-b0a0bee55823-results.txt");
+            System.IO.File.Copy(@"G:\downloads\output1.txt", @"B:\input\output1.txt");
+            System.IO.File.Copy(@"G:\downloads\f5982351-8fe4-4a9f-b371-b0a0bee55823-results.txt", @"b:\input\f5982351-8fe4-4a9f-b371-b0a0bee55823-results.txt", true);
 
             InitializeComponent();
 
