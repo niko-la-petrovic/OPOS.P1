@@ -31,11 +31,15 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\AR.P2\AR.P2.Algo\AR.P2.Algo.csproj" />
+    <ProjectReference Include="..\..\AR.P2\AR.P2.Manager\AR.P2.Manager.csproj" />
     <ProjectReference Include="..\OPOS.P1.Lib\OPOS.P1.Lib.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="input_44100_mono_16b.wav">
+    <None Update="input_2s_800hz_44100_mono_16b.wav">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="input_800hz_44100_mono_16b.wav">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Update="output.wav">

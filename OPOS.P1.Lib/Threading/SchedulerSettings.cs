@@ -2,7 +2,7 @@
 {
     public class SchedulerSettings
     {
-        public int UsableCores { get; set; }
+        public int MaxCores { get; set; }
         public long MaxTasks { get; set; }
     }
 }

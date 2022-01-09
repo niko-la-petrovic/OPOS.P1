@@ -579,6 +579,9 @@ namespace OPOS.P1.Fs.Lib
             throw new NotImplementedException();
         }
 
+        // TODO when a file has been written to, check if the current timer as this file in it
+        // if it does, clear
+        // schedule the current file for the event to be raised after 5s
         public NtStatus WriteFile(string fileName, byte[] buffer, out int bytesWritten, long offset, IDokanFileInfo info)
         {
             var append = offset == -1;

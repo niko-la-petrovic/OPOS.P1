@@ -2,10 +2,16 @@
 
   <PropertyGroup>
     <TargetFramework>net5.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="dokannet" Version="1.5.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\AR.P2\AR.P2.Algo\AR.P2.Algo.csproj" />
+    <ProjectReference Include="..\..\AR.P2\AR.P2.Manager\AR.P2.Manager.csproj" />
   </ItemGroup>
 
 </Project>
