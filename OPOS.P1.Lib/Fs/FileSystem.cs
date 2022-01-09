@@ -1,0 +1,591 @@
+﻿using DokanNet;
+using DokanNet.Logging;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Security.AccessControl;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
+
+namespace OPOS.P1.Fs.Lib
+{
+    public abstract class IFsItem
+    {
+        // TODO adjust setters
+        public string Name { get; set; }
+        public Directory Parent { get; set; }
+        public DateTime CreationTime { get; set; }
+        public DateTime LastAccessTime { get; set; }
+        public DateTime LastWriteTime { get; set; }
+
+        public byte[] Data { get; set; } = new byte[0];
+        public long Size => Data?.Length ?? 0;
+
+        public FileAttributes FileAttributes { get; set; }
+
+        public abstract FileInformation FileInformation { get; }
+    }
+
+    public class File : IFsItem
+    {
+        private static readonly SHA1 sha = SHA1.Create();
+
+        private byte[] hash;
+        public byte[] Hash
+        {
+            get
+            {
+                if (Data != null && hash == null)
+                    hash = sha.ComputeHash(Data);
+
+                return hash;
+            }
+        }
+
+        public override FileInformation FileInformation =>
+            new FileInformation
+            {
+                Attributes = FileAttributes.Normal,
+                CreationTime = CreationTime,
+                LastAccessTime = LastAccessTime,
+                LastWriteTime = LastWriteTime,
+                Length = Size,
+                FileName = Name,
+            };
+
+        public override bool Equals(object obj)
+        {
+            if (obj is not File)
+                return false;
+
+            var o = obj as File;
+
+            return Equals(Name, o.Name) && Equals(Hash, o.Hash)
+                && Parent == o.Parent;
+        }
+
+        public override int GetHashCode()
+        {
+            return HashCode.Combine(Name, Hash, Parent);
+        }
+    }
+
+    public class Directory : IFsItem
+    {
+        public HashSet<Directory> Directories { get; set; } = new();
+        public HashSet<File> Files { get; set; } = new();
+
+        public IEnumerable<IFsItem> Children => (Files as IEnumerable<IFsItem>).Concat(Directories);
+
+        public void Remove(IFsItem fsItem)
+        {
+            if (fsItem is null)
+                return;
+
+            if (fsItem is File file)
+                Files.Remove(file);
+            else if (fsItem is Directory dir)
+                Directories.Remove(dir);
+        }
+
+        public override FileInformation FileInformation =>
+            new FileInformation
+            {
+                Attributes = FileAttributes.Directory,
+                CreationTime = CreationTime,
+                LastAccessTime = LastAccessTime,
+                LastWriteTime = LastWriteTime,
+                Length = Data?.LongLength ?? 0,
+                FileName = Name,
+            };
+
+        public override bool Equals(object obj)
+        {
+            if (obj is not Directory)
+                return false;
+
+            var o = obj as Directory;
+
+            return Name == o.Name
+                && Parent == o.Parent
+                && (Directories?.SetEquals(o?.Directories) ?? false)
+                && (Files?.SetEquals(o?.Files) ?? false);
+        }
+
+        public override int GetHashCode()
+        {
+            return HashCode.Combine(
+                Directories,
+                Files,
+                Parent,
+                Name);
+        }
+
+        public static bool IsRoot(string filePath) => filePath == $"{Path.DirectorySeparatorChar}";
+
+        public void Add(IFsItem item)
+        {
+            if (item is Directory dir)
+                Directories.Add(dir);
+            else if (item is File file)
+                Files.Add(file);
+        }
+
+        public void RemoveByName(IFsItem item)
+        {
+            if (item is Directory dir)
+                Directories.RemoveWhere(d => d.Name == dir.Name);
+            if (item is File file)
+                Files.RemoveWhere(f => f.Name == file.Name);
+        }
+
+        public override string ToString()
+        {
+            return $"{Name}";
+        }
+
+        public static IEnumerable<string> GetPathItems(string filePath)
+        {
+            return filePath.Split($"{Path.DirectorySeparatorChar}")
+                .Where(pi => !string.IsNullOrWhiteSpace(pi));
+        }
+    }
+
+    public static class DirectoryExtensions
+    {
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="rootDirectory"></param>
+        /// <param name="filePath"></param>
+        /// <param name="pattern">If null, return exact file.</param>
+        /// <returns></returns>
+        public static IEnumerable<IFsItem> GetFsItems(this Directory rootDirectory, string filePath, string pattern)
+        {
+            if (string.IsNullOrWhiteSpace(filePath))
+                throw new ArgumentException(filePath, nameof(filePath));
+
+            Directory parent = null;
+
+            var pathItems = Directory.GetPathItems(filePath);
+            var lastPathItems = pathItems.TakeLast(2);
+            var parentName = lastPathItems.FirstOrDefault();
+            var fileName = lastPathItems.LastOrDefault();
+
+            if (filePath == Path.DirectorySeparatorChar.ToString())
+                parent = rootDirectory;
+            else if (parentName is null || pathItems.Count() < 2)
+                parent = rootDirectory;
+            else
+            {
+                var currentParent = rootDirectory;
+                Queue<string> itemQueue = new Queue<string>(pathItems);
+                while (itemQueue.Any())
+                {
+                    var nextPathItem = itemQueue.Dequeue();
+                    var nextDir = currentParent.Children.FirstOrDefault(c => c.Name == nextPathItem) as Directory;
+                    if (nextDir is not null)
+                    {
+                        currentParent = nextDir;
+                        if (nextDir.Name == parentName)
+                            break;
+                    }
+                }
+                parent = currentParent;
+            }
+
+            if (string.IsNullOrWhiteSpace(pattern) || pattern == "*")
+                return parent.Children;
+
+            var filteredChildren = parent.Children
+                .Where(c => c.Name.StartsWith(pattern));
+
+            return filteredChildren;
+        }
+    }
+
+    public class FileSystem : IDokanOperations
+    {
+        private readonly Directory rootDirectory = new()
+        {
+            Name = "root",
+            LastAccessTime = DateTime.Now,
+            CreationTime = DateTime.Now,
+            LastWriteTime = DateTime.Now
+        };
+
+        private ConsoleLogger logger = new("[IMFS] ");
+
+        private Func<long> totalMemory = () => 0;
+        private Func<long> freeMemory = () => 0;
+
+        public FileSystem(Func<long> getTotalMemory, Func<long> getFreeMemory)
+        {
+            totalMemory = getTotalMemory;
+            freeMemory = getFreeMemory;
+        }
+
+        public IFsItem GetFsItem(string filePath)
+        {
+            FindItemParent(filePath, out var parent, out var itemName);
+            if (IsRootDir(parent, itemName))
+                return rootDirectory;
+
+            return parent?.Children?.FirstOrDefault(c => c.Name == itemName);
+        }
+
+        public IEnumerable<IFsItem> GetFsItems(string filePath, string pattern)
+        {
+            FindItemParent(filePath, out var parent, out var itemName);
+
+            IEnumerable<IFsItem> children;
+            if (IsRootDir(parent, itemName))
+                children = rootDirectory.Children;
+            else
+            {
+                if (parent is null || string.IsNullOrWhiteSpace(itemName))
+                    return null;
+
+                var dirToList = parent.Children.First(c => c.Name == itemName) as Directory;
+                children = dirToList.Children;
+            }
+
+            if (string.IsNullOrWhiteSpace(pattern) || pattern == "*")
+                return children;
+
+            var filteredChildren = children
+                .Where(c => c.Name.StartsWith(pattern));
+
+            return filteredChildren;
+        }
+
+        public void Cleanup(string filePath, IDokanFileInfo info)
+        {
+            (info as IDisposable)?.Dispose();
+
+            var item = GetFsItem(filePath);
+
+            if (info.DeleteOnClose)
+                item?.Parent?.Remove(item);
+        }
+
+        public void CloseFile(string fileName, IDokanFileInfo info)
+        {
+            (info.Context as IDisposable)?.Dispose();
+            info.Context = null;
+        }
+
+        public NtStatus CreateFile(
+            string filePath,
+            DokanNet.FileAccess access,
+            FileShare share,
+            FileMode mode,
+            FileOptions options,
+            FileAttributes attributes,
+            IDokanFileInfo info)
+        {
+            Directory parent;
+            IFsItem newChild;
+            string itemName;
+            FindItemParent(filePath, out parent, out itemName);
+
+            // root dir
+            if (IsRootDir(parent, itemName))
+            {
+                // open
+                info.IsDirectory = true;
+                if (mode is FileMode.Open or FileMode.OpenOrCreate or FileMode.CreateNew)
+                    return NtStatus.Success;
+            }
+
+            var existingChild = parent?.Children?.FirstOrDefault(c => c.Name == itemName);
+            if (existingChild is not null)
+            {
+                var isDirectory = existingChild is Directory;
+                info.IsDirectory = isDirectory;
+
+                if (isDirectory && mode is FileMode.OpenOrCreate or FileMode.Create or FileMode.Open)
+                    return NtStatus.Success;
+                else if (isDirectory && mode is FileMode.CreateNew)
+                    return DokanResult.AlreadyExists;
+
+                if (!isDirectory)
+                    if (mode is FileMode.OpenOrCreate or FileMode.Create)
+                        return DokanResult.AlreadyExists;
+                    else if (mode is FileMode.Open)
+                        return NtStatus.Success;
+                    else if (mode is FileMode.CreateNew)
+                        return DokanResult.AlreadyExists;
+            }
+            else if (mode is FileMode.Open or FileMode.Append or FileMode.Truncate)
+                return DokanResult.FileNotFound;
+
+            if (mode is FileMode.Create or FileMode.CreateNew)
+            {
+                if (info.IsDirectory)
+                {
+                    newChild = new Directory
+                    {
+                        Parent = parent,
+                        Name = itemName,
+                        CreationTime = DateTime.Now,
+                        LastAccessTime = DateTime.Now,
+                        LastWriteTime = DateTime.Now
+                    };
+                }
+                else
+                {
+                    newChild = new File
+                    {
+                        Parent = parent,
+                        Name = itemName,
+                        CreationTime = DateTime.Now,
+                        LastAccessTime = DateTime.Now,
+                        LastWriteTime = DateTime.Now
+                    };
+                }
+
+                if (mode is FileMode.Create)
+                    parent.RemoveByName(newChild);
+                parent.Add(newChild);
+            }
+
+            return NtStatus.Success;
+        }
+
+        public bool IsRootDir(Directory parent, string itemName)
+        {
+            return parent is null && (itemName is null || itemName == Path.DirectorySeparatorChar.ToString() || itemName == rootDirectory.Name);
+        }
+
+        public void FindItemParent(string filePath, out Directory parent, out string itemName)
+        {
+            var pathItems = Directory.GetPathItems(filePath);
+            itemName = pathItems.LastOrDefault();
+            if (!pathItems.Any() || (pathItems.Count() == 1 && pathItems.Last() == rootDirectory.Name))
+            {
+                parent = null;
+                return;
+            }
+            if (pathItems.Count() < 2)
+                parent = rootDirectory;
+            else
+            {
+                var currentParent = rootDirectory;
+                Queue<string> pathItemQ = new(pathItems);
+                while (pathItemQ.Any() && currentParent is not null)
+                {
+                    string currentItem = pathItemQ.Dequeue();
+                    if (currentItem == itemName)
+                        break;
+                    currentParent = currentParent.Directories.FirstOrDefault(dir => dir.Name == currentItem);
+                }
+                parent = currentParent;
+            }
+        }
+
+        public NtStatus DeleteDirectory(string filePath, IDokanFileInfo info)
+        {
+            var directory = GetFsItem(filePath);
+            if (directory is not null)
+                return NtStatus.Success;
+
+            return NtStatus.ObjectNameNotFound;
+        }
+
+        public NtStatus DeleteFile(string fileName, IDokanFileInfo info)
+        {
+            if (info.IsDirectory)
+                return NtStatus.Error;
+
+            info.DeleteOnClose = true;
+            return NtStatus.Success;
+        }
+
+        public NtStatus FindFiles(string fileName, out IList<FileInformation> files, IDokanFileInfo info)
+        {
+            throw new NotImplementedException();
+        }
+
+        public NtStatus FindFilesWithPattern(string fileName, string searchPattern, out IList<FileInformation> files, IDokanFileInfo info)
+        {
+            var matchedFiles = GetFsItems(fileName, searchPattern);
+
+            files = matchedFiles
+                .Select(file =>
+                {
+                    return file.FileInformation;
+                })
+                .ToList();
+
+            return NtStatus.Success;
+        }
+
+        public NtStatus FindStreams(string fileName, out IList<FileInformation> streams, IDokanFileInfo info)
+        {
+            throw new NotImplementedException();
+        }
+
+        public NtStatus FlushFileBuffers(string fileName, IDokanFileInfo info)
+        {
+            throw new NotImplementedException();
+        }
+
+        public NtStatus GetDiskFreeSpace(out long freeBytesAvailable, out long totalNumberOfBytes, out long totalNumberOfFreeBytes, IDokanFileInfo info)
+        {
+            freeBytesAvailable = freeMemory();
+            totalNumberOfFreeBytes = freeMemory();
+
+            totalNumberOfBytes = totalMemory();
+            return NtStatus.Success;
+        }
+
+        public NtStatus GetFileInformation(string fileName, out FileInformation fileInfo, IDokanFileInfo info)
+        {
+            var item = GetFsItem(fileName);
+            if (item is null)
+            {
+                fileInfo = default;
+                return NtStatus.Error;
+            }
+
+            fileInfo = item.FileInformation;
+
+            return NtStatus.Success;
+        }
+
+        public NtStatus GetFileSecurity(string fileName, out FileSystemSecurity security, AccessControlSections sections, IDokanFileInfo info)
+        {
+            security = null;
+            return NtStatus.Success;
+            // TODO implement
+        }
+
+        public NtStatus GetVolumeInformation(out string volumeLabel, out FileSystemFeatures features, out string fileSystemName, out uint maximumComponentLength, IDokanFileInfo info)
+        {
+            volumeLabel = "IMFS";
+            features = FileSystemFeatures.None;
+            fileSystemName = "IMFS";
+            maximumComponentLength = 255;
+
+            return NtStatus.Success;
+        }
+
+        public NtStatus LockFile(string fileName, long offset, long length, IDokanFileInfo info)
+        {
+            // TODO implement
+            throw new NotImplementedException();
+        }
+
+        public NtStatus Mounted(IDokanFileInfo info)
+        {
+            // TODO check
+            return NtStatus.Success;
+        }
+
+        public NtStatus MoveFile(string oldFilePath, string newFilePath, bool replace, IDokanFileInfo info)
+        {
+            var oldItem = GetFsItem(oldFilePath);
+
+            return NtStatus.NotImplemented;
+        }
+
+        public NtStatus ReadFile(string fileName, byte[] buffer, out int bytesRead, long offset, IDokanFileInfo info)
+        {
+            var item = GetFsItem(fileName);
+            if (item is null)
+            {
+                bytesRead = 0;
+                return NtStatus.Error;
+            }
+
+            int toRead = (int)Math.Min(item.Size - offset, buffer.Length);
+            item.Data.AsSpan().Slice((int)offset, toRead).CopyTo(buffer.AsSpan());
+            bytesRead = toRead;
+
+            return NtStatus.Success;
+        }
+
+        public NtStatus SetAllocationSize(string fileName, long length, IDokanFileInfo info)
+        {
+            throw new NotImplementedException();
+        }
+
+        public NtStatus SetEndOfFile(string fileName, long length, IDokanFileInfo info)
+        {
+            return NtStatus.Error;
+        }
+
+        public NtStatus SetFileAttributes(string fileName, FileAttributes attributes, IDokanFileInfo info)
+        {
+            var item = GetFsItem(fileName);
+            if (item is null)
+                return NtStatus.Error;
+
+            item.FileAttributes = attributes;
+            return NtStatus.Success;
+        }
+
+        public NtStatus SetFileSecurity(string fileName, FileSystemSecurity security, AccessControlSections sections, IDokanFileInfo info)
+        {
+            throw new NotImplementedException();
+        }
+
+        public NtStatus SetFileTime(string fileName, DateTime? creationTime, DateTime? lastAccessTime, DateTime? lastWriteTime, IDokanFileInfo info)
+        {
+            var item = GetFsItem(fileName);
+            if (item is null)
+                return NtStatus.Error;
+
+            item.CreationTime = creationTime ?? DateTime.Now;
+            item.LastAccessTime = lastAccessTime ?? DateTime.Now;
+            item.LastWriteTime = lastWriteTime ?? DateTime.Now;
+
+            return NtStatus.Success;
+        }
+
+        public NtStatus UnlockFile(string fileName, long offset, long length, IDokanFileInfo info)
+        {
+            throw new NotImplementedException();
+        }
+
+        public NtStatus Unmounted(IDokanFileInfo info)
+        {
+            throw new NotImplementedException();
+        }
+
+        public NtStatus WriteFile(string fileName, byte[] buffer, out int bytesWritten, long offset, IDokanFileInfo info)
+        {
+            var append = offset == -1;
+
+            var file = GetFsItem(fileName);
+            if (file is null || file is Directory)
+            {
+                bytesWritten = 0;
+                return NtStatus.Error;
+            }
+
+            lock (file.Data)
+            {
+                byte[] newData;
+                if (append)
+                {
+                    newData = file.Data.Concat(buffer).ToArray();
+                }
+                else
+                {
+                    newData = file.Data.Take((int)offset).Concat(buffer).ToArray();
+                }
+                file.Data = newData;
+            }
+            bytesWritten = buffer.Length;
+            file.LastAccessTime = DateTime.Now;
+            file.LastWriteTime = DateTime.Now;
+
+            return NtStatus.Success;
+        }
+    }
+}
