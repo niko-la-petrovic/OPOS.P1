@@ -8,6 +8,7 @@ using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace OPOS.P1.Fs.Lib
@@ -27,6 +28,27 @@ namespace OPOS.P1.Fs.Lib
         public FileAttributes FileAttributes { get; set; }
 
         public abstract FileInformation FileInformation { get; }
+
+        public override string ToString()
+        {
+            return $"{Name}";
+        }
+
+    }
+
+    public enum FileOperations
+    {
+        Write,
+        Append,
+        Copy,
+        Move,
+        Delete
+    }
+
+    public class FileOperationEvent
+    {
+        public FileOperations Operation { get; set; }
+        public File File { get; set; }
     }
 
     public class File : IFsItem
@@ -142,68 +164,10 @@ namespace OPOS.P1.Fs.Lib
                 Files.RemoveWhere(f => f.Name == file.Name);
         }
 
-        public override string ToString()
-        {
-            return $"{Name}";
-        }
-
         public static IEnumerable<string> GetPathItems(string filePath)
         {
             return filePath.Split($"{Path.DirectorySeparatorChar}")
                 .Where(pi => !string.IsNullOrWhiteSpace(pi));
-        }
-    }
-
-    public static class DirectoryExtensions
-    {
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="rootDirectory"></param>
-        /// <param name="filePath"></param>
-        /// <param name="pattern">If null, return exact file.</param>
-        /// <returns></returns>
-        public static IEnumerable<IFsItem> GetFsItems(this Directory rootDirectory, string filePath, string pattern)
-        {
-            if (string.IsNullOrWhiteSpace(filePath))
-                throw new ArgumentException(filePath, nameof(filePath));
-
-            Directory parent = null;
-
-            var pathItems = Directory.GetPathItems(filePath);
-            var lastPathItems = pathItems.TakeLast(2);
-            var parentName = lastPathItems.FirstOrDefault();
-            var fileName = lastPathItems.LastOrDefault();
-
-            if (filePath == Path.DirectorySeparatorChar.ToString())
-                parent = rootDirectory;
-            else if (parentName is null || pathItems.Count() < 2)
-                parent = rootDirectory;
-            else
-            {
-                var currentParent = rootDirectory;
-                Queue<string> itemQueue = new Queue<string>(pathItems);
-                while (itemQueue.Any())
-                {
-                    var nextPathItem = itemQueue.Dequeue();
-                    var nextDir = currentParent.Children.FirstOrDefault(c => c.Name == nextPathItem) as Directory;
-                    if (nextDir is not null)
-                    {
-                        currentParent = nextDir;
-                        if (nextDir.Name == parentName)
-                            break;
-                    }
-                }
-                parent = currentParent;
-            }
-
-            if (string.IsNullOrWhiteSpace(pattern) || pattern == "*")
-                return parent.Children;
-
-            var filteredChildren = parent.Children
-                .Where(c => c.Name.StartsWith(pattern));
-
-            return filteredChildren;
         }
     }
 
@@ -217,10 +181,17 @@ namespace OPOS.P1.Fs.Lib
             LastWriteTime = DateTime.Now
         };
 
-        private ConsoleLogger logger = new("[IMFS] ");
+        //private ConsoleLogger logger = new("[IMFS] ");
 
         private Func<long> totalMemory = () => 0;
         private Func<long> freeMemory = () => 0;
+
+        public event EventHandler<FileOperationEvent> OnFileCopy;
+
+        protected virtual void OnCopyOccurred(FileOperationEvent e)
+        {
+            OnFileCopy?.Invoke(this, e);
+        }
 
         public FileSystem(Func<long> getTotalMemory, Func<long> getFreeMemory)
         {
@@ -264,9 +235,9 @@ namespace OPOS.P1.Fs.Lib
 
         public void Cleanup(string filePath, IDokanFileInfo info)
         {
-            (info as IDisposable)?.Dispose();
-
             var item = GetFsItem(filePath);
+
+            (info as IDisposable)?.Dispose();
 
             if (info.DeleteOnClose)
                 item?.Parent?.Remove(item);
@@ -274,6 +245,10 @@ namespace OPOS.P1.Fs.Lib
 
         public void CloseFile(string fileName, IDokanFileInfo info)
         {
+            if (info.Context is FileOperationEvent fileOperationEvent)
+            {
+                OnFileCopy?.Invoke(this, fileOperationEvent);
+            }
             (info.Context as IDisposable)?.Dispose();
             info.Context = null;
         }
@@ -292,10 +267,8 @@ namespace OPOS.P1.Fs.Lib
             string itemName;
             FindItemParent(filePath, out parent, out itemName);
 
-            // root dir
             if (IsRootDir(parent, itemName))
             {
-                // open
                 info.IsDirectory = true;
                 if (mode is FileMode.Open or FileMode.OpenOrCreate or FileMode.CreateNew)
                     return NtStatus.Success;
@@ -313,12 +286,15 @@ namespace OPOS.P1.Fs.Lib
                     return DokanResult.AlreadyExists;
 
                 if (!isDirectory)
+                {
+                    info.Context = existingChild;
                     if (mode is FileMode.OpenOrCreate or FileMode.Create)
                         return DokanResult.AlreadyExists;
                     else if (mode is FileMode.Open)
                         return NtStatus.Success;
                     else if (mode is FileMode.CreateNew)
                         return DokanResult.AlreadyExists;
+                }
             }
             else if (mode is FileMode.Open or FileMode.Append or FileMode.Truncate)
                 return DokanResult.FileNotFound;
@@ -349,7 +325,7 @@ namespace OPOS.P1.Fs.Lib
                 }
 
                 if (mode is FileMode.Create)
-                    parent.RemoveByName(newChild);
+                    parent?.RemoveByName(newChild);
                 parent.Add(newChild);
             }
 
@@ -390,10 +366,13 @@ namespace OPOS.P1.Fs.Lib
         public NtStatus DeleteDirectory(string filePath, IDokanFileInfo info)
         {
             var directory = GetFsItem(filePath);
-            if (directory is not null)
+            if (directory is Directory dir)
+            {
+                info.DeleteOnClose = true;
                 return NtStatus.Success;
+            }
 
-            return NtStatus.ObjectNameNotFound;
+            return DokanResult.FileNotFound;
         }
 
         public NtStatus DeleteFile(string fileName, IDokanFileInfo info)
@@ -405,7 +384,10 @@ namespace OPOS.P1.Fs.Lib
             return NtStatus.Success;
         }
 
-        public NtStatus FindFiles(string fileName, out IList<FileInformation> files, IDokanFileInfo info)
+        public NtStatus FindFiles(
+            string fileName,
+            out IList<FileInformation> files,
+            IDokanFileInfo info)
         {
             throw new NotImplementedException();
         }
@@ -434,7 +416,11 @@ namespace OPOS.P1.Fs.Lib
             throw new NotImplementedException();
         }
 
-        public NtStatus GetDiskFreeSpace(out long freeBytesAvailable, out long totalNumberOfBytes, out long totalNumberOfFreeBytes, IDokanFileInfo info)
+        public NtStatus GetDiskFreeSpace(
+            out long freeBytesAvailable,
+            out long totalNumberOfBytes,
+            out long totalNumberOfFreeBytes,
+            IDokanFileInfo info)
         {
             freeBytesAvailable = freeMemory();
             totalNumberOfFreeBytes = freeMemory();
@@ -464,7 +450,12 @@ namespace OPOS.P1.Fs.Lib
             // TODO implement
         }
 
-        public NtStatus GetVolumeInformation(out string volumeLabel, out FileSystemFeatures features, out string fileSystemName, out uint maximumComponentLength, IDokanFileInfo info)
+        public NtStatus GetVolumeInformation(
+            out string volumeLabel,
+            out FileSystemFeatures features,
+            out string fileSystemName,
+            out uint maximumComponentLength,
+            IDokanFileInfo info)
         {
             volumeLabel = "IMFS";
             features = FileSystemFeatures.None;
@@ -488,9 +479,31 @@ namespace OPOS.P1.Fs.Lib
 
         public NtStatus MoveFile(string oldFilePath, string newFilePath, bool replace, IDokanFileInfo info)
         {
+            FindItemParent(oldFilePath, out var oldParent, out var itemName);
             var oldItem = GetFsItem(oldFilePath);
 
-            return NtStatus.NotImplemented;
+            var existingNewItem = GetFsItem(newFilePath);
+            if (existingNewItem is IFsItem && replace)
+                existingNewItem?.Parent?.Remove(existingNewItem);
+
+            var pathItems = Directory.GetPathItems(newFilePath);
+            var newName = pathItems.Last();
+            var parentPathItems = pathItems.SkipLast(1).ToList();
+            if (!parentPathItems.Any())
+                parentPathItems.Add(Path.DirectorySeparatorChar.ToString());
+
+            var parentDirPath = string.Join(Path.DirectorySeparatorChar, parentPathItems);
+
+            var parent = GetFsItem(parentDirPath) as Directory;
+            if (parent is null)
+                return NtStatus.Error;
+
+            oldParent.RemoveByName(oldItem);
+            oldItem.Parent = parent;
+            oldItem.Name = newName;
+            parent.Add(oldItem);
+
+            return NtStatus.Success;
         }
 
         public NtStatus ReadFile(string fileName, byte[] buffer, out int bytesRead, long offset, IDokanFileInfo info)
@@ -561,8 +574,8 @@ namespace OPOS.P1.Fs.Lib
         {
             var append = offset == -1;
 
-            var file = GetFsItem(fileName);
-            if (file is null || file is Directory)
+            var file = GetFsItem(fileName) as File;
+            if (file is null)
             {
                 bytesWritten = 0;
                 return NtStatus.Error;
@@ -570,14 +583,22 @@ namespace OPOS.P1.Fs.Lib
 
             lock (file.Data)
             {
+                var fileOpEvent = new FileOperationEvent
+                {
+                    File = file,
+                };
+                info.Context = fileOpEvent;
+
                 byte[] newData;
                 if (append)
                 {
                     newData = file.Data.Concat(buffer).ToArray();
+                    fileOpEvent.Operation = FileOperations.Append;
                 }
                 else
                 {
                     newData = file.Data.Take((int)offset).Concat(buffer).ToArray();
+                    fileOpEvent.Operation = FileOperations.Write;
                 }
                 file.Data = newData;
             }
