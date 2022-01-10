@@ -69,7 +69,7 @@ namespace OPOS.P1.WinForms
             System.IO.Directory.CreateDirectory(outputFolder);
 
             System.IO.File.Copy(@"G:\downloads\output1.txt", @"B:\input\output1.txt");
-            System.IO.File.Copy(@"G:\downloads\f5982351-8fe4-4a9f-b371-b0a0bee55823-results.txt", @"b:\input\f5982351-8fe4-4a9f-b371-b0a0bee55823-results.txt", true);
+            //System.IO.File.Copy(@"G:\downloads\f5982351-8fe4-4a9f-b371-b0a0bee55823-results.txt", @"b:\input\f5982351-8fe4-4a9f-b371-b0a0bee55823-results.txt", true);
 
             InitializeComponent();
 

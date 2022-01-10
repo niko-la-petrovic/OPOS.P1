@@ -181,6 +181,9 @@ namespace OPOS.P1.Fs.Lib
             LastWriteTime = DateTime.Now
         };
 
+        // TODO handle case where file is deleted
+        private readonly Dictionary<IFsItem, System.Timers.Timer> fileWriteTimers = new();
+
         //private ConsoleLogger logger = new("[IMFS] ");
 
         private Func<long> totalMemory = () => 0;
@@ -593,14 +596,25 @@ namespace OPOS.P1.Fs.Lib
                 return NtStatus.Error;
             }
 
+            var fileOpEvent = new FileOperationEvent
+            {
+                File = file,
+            };
+            info.Context = fileOpEvent;
+
+            if (fileWriteTimers.TryGetValue(file, out var timer)){
+                timer.Stop();
+                timer.Dispose();
+                fileWriteTimers.Remove(file);
+            }
+            var newTimer = new System.Timers.Timer();
+            newTimer.Interval = TimeSpan.FromSeconds(5).TotalMilliseconds;
+            newTimer.Elapsed += (s, e) => OnWriteOccurred(fileOpEvent);
+            fileWriteTimers.Add(file, newTimer);
+            newTimer.Start();
+
             lock (file.Data)
             {
-                var fileOpEvent = new FileOperationEvent
-                {
-                    File = file,
-                };
-                info.Context = fileOpEvent;
-
                 byte[] newData;
                 if (append)
                 {

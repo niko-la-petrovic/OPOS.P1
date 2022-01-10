@@ -134,7 +134,6 @@ namespace OPOS.P1.Lib.Test
             Assert.True(allWithinMargin);
         }
 
-
         [Fact]
         public void CanFftParallelInner()
         {
