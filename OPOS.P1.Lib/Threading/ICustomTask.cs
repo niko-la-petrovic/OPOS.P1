@@ -5,7 +5,7 @@ namespace OPOS.P1.Lib.Threading
 {
     public interface ICustomTask
     {
-        long MillisecondRunTime { get; }
+        TimeSpan MaxRunDuration { get; }
         DateTime Deadline { get; }
         int UsableCores { get; }
         int Priority { get; }

@@ -6,14 +6,14 @@ using System.Threading.Tasks;
 
 namespace OPOS.P1.Lib.Threading
 {
-    public class CustomTaskSettings
+    public record CustomTaskSettings
     {
-        public long MillisecondRunTime { get; set; }
+        public TimeSpan MaxRunDuration { get; init; }
 
-        public DateTime Deadline { get; set; }
+        public DateTime Deadline { get; init; }
 
-        public int UsableCores { get; set; }
+        public int MaxCores { get; init; }
 
-        public int Priority { get; set; }
+        public int Priority { get; init; }
     }
 }

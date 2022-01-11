@@ -6,19 +6,36 @@ using System.Threading.Tasks;
 
 namespace OPOS.P1.Lib.Threading
 {
+    public class CustomTaskPriorityComparer : IComparer<int>
+    {
+        public int Compare(int x, int y)
+        {
+            return x > y ? -1 : 1;
+        }
+    }
+
     public abstract class CustomTask : ICustomTask
     {
-        public CustomTaskSettings Settings { get; set; }
+        public CustomTask(CustomTaskSettings customTaskSettings)
+        {
+            Settings = customTaskSettings ?? throw new ArgumentNullException(nameof(customTaskSettings));
+
+            if (Settings.MaxCores == 0)
+                Settings = Settings with { MaxCores = Environment.ProcessorCount };
+            else if (Settings.MaxCores < 0) throw new ArgumentOutOfRangeException(nameof(Settings.MaxCores));
+        }
+
+        public CustomTaskSettings Settings { get; init; }
 
         public float Progress { get; protected set; }
 
         public TaskStatus Status { get; protected set; }
 
-        long ICustomTask.MillisecondRunTime => Settings.MillisecondRunTime;
+        public TimeSpan MaxRunDuration => Settings.MaxRunDuration;
 
         DateTime ICustomTask.Deadline => Settings.Deadline;
 
-        int ICustomTask.UsableCores => Settings.UsableCores;
+        int ICustomTask.UsableCores => Settings.MaxCores;
 
         int ICustomTask.Priority => Settings.Priority;
 
