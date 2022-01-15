@@ -17,25 +17,15 @@ namespace OPOS.P1.Lib.Algo
         public FftTaskState State { get; set; }
     }
 
-    public class FftTaskState : CustomTaskState
+    public class FftTaskState : ICustomTaskState
     {
         public List<FftTaskSubState> FftTaskSubStates { get; set; }
     }
 
-    public class FftTaskSubState : CustomTaskState
+    public class FftTaskSubState : ICustomTaskState
     {
         public string InputFilePath { get; init; }
         public string OutputFilePath { get; init; }
 
-    }
-
-    public abstract class CustomTaskState
-    {
-        
-    }
-
-    public class CustomResource
-    {
-        public string Uri { get; init; }
     }
 }
