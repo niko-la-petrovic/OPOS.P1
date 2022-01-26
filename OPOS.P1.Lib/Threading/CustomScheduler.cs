@@ -2,16 +2,16 @@
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using static OPOS.P1.Lib.Threading.CustomCancellationToken;
 
 namespace OPOS.P1.Lib.Threading
 {
     public class CustomScheduler : IDisposable
     {
         private bool disposed;
-        private ThreadLocal<CustomTask> currentTask = new ThreadLocal<CustomTask>();
+        private ThreadLocal<CustomTask> currentTask = new();
 
         private List<Thread> threads;
 
@@ -22,7 +22,7 @@ namespace OPOS.P1.Lib.Threading
             new(new CustomTaskComparer());
 
         // TODO add lock or use concurrent variant
-        private Dictionary<CustomTask, CancellationTokenSource> taskCancellationTokenSources = new();
+        private readonly Dictionary<CustomTask, CustomCancellationTokenSource> taskCancellationTokenSources = new();
 
         // TODO add lock or use concurrent variant
         private Dictionary<CustomTask, Thread> threadTasks = new();
@@ -59,7 +59,7 @@ namespace OPOS.P1.Lib.Threading
             threads = new List<Thread>(Settings.MaxCores);
             for (int i = 0; i < Settings.MaxCores; i++)
             {
-                Thread thread = new Thread(ThreadLoop);
+                Thread thread = new(ThreadLoop) { Name = $"{nameof(CustomScheduler)}:{i}" };
                 threads.Add(thread);
                 thread.Start();
             }
@@ -90,7 +90,11 @@ namespace OPOS.P1.Lib.Threading
                 var deadlineInterval = customTask.Settings.Deadline.Subtract(DateTime.Now);
                 var runDurationInterval = customTask.Settings.MaxRunDuration;
                 var cancelInterval = deadlineInterval < runDurationInterval ? deadlineInterval : runDurationInterval;
-                var source = new CancellationTokenSource(cancelInterval);
+                var source = new CustomCancellationTokenSource
+                {
+                    CancellationTokenSource = new CancellationTokenSource(cancelInterval),
+                    PauseTokenSource = new CancellationTokenSource()
+                };
 
                 lock (taskCancellationTokenSources)
                     taskCancellationTokenSources.Add(customTask, source);
@@ -113,17 +117,23 @@ namespace OPOS.P1.Lib.Threading
                     if (taskQueue.Count > 0)
                         shouldTakeNextTask = true;
 
+                    taskQueue.TryPeek(out var peekTask, out _);
+
                     if (shouldTakeNextTask
                         && taskQueue.Count > 0
-                        && taskQueue.Peek()?.Status == TaskStatus.WaitingForActivation)
+                        && peekTask?.Status == TaskStatus.WaitingForActivation
+                        && (peekTask?.WantsToRun ?? false))
                         nextTask = taskQueue.Dequeue();
                 }
 
                 if (nextTask is not null)
                 {
                     taskCancellationTokenSources.TryGetValue(nextTask, out var tokenSource);
-                    var cancellationToken = tokenSource.Token;
-                    var token = new CustomCancellationToken(cancellationToken);
+                    var cancellationToken = tokenSource.CancellationTokenSource.Token;
+                    var pauseToken = tokenSource.PauseTokenSource.Token;
+                    var token = new CustomCancellationToken(cancellationToken, pauseToken);
+
+
 
                     currentTask.Value = nextTask;
 
@@ -131,10 +141,16 @@ namespace OPOS.P1.Lib.Threading
                     try
                     {
                         nextTask.LastStartedRunning = DateTime.Now;
+                        try
+                        {
+                            nextTask.Run(nextTask.State, token);
+                        }
                         // TODO handle interrupt
-                        nextTask.Run(nextTask.State, token);
+                        catch (ThreadInterruptedException)
+                        {
+                        }
                     }
-                    catch (OperationCanceledException)
+                    catch (OperationCanceledException ex)
                     {
                         var lastRunDuration = nextTask.TotalRunDuration.Add(DateTime.Now - nextTask.LastStartedRunning);
                         nextTask.TotalRunDuration = lastRunDuration;
@@ -143,7 +159,6 @@ namespace OPOS.P1.Lib.Threading
                         bool reachedMaxRunDuration = nextTask.TotalRunDuration >= nextTask.Settings.MaxRunDuration;
                         if (reachedDeadline
                             || reachedMaxRunDuration
-                            || !nextTask.WantsToRun
                             || nextTask.Status == TaskStatus.Canceled)
                         {
                             nextTask.MetDeadline = reachedDeadline;
@@ -154,11 +169,21 @@ namespace OPOS.P1.Lib.Threading
                             continue;
                         }
 
-                        nextTask.WantsToRun = true;
-                        nextTask.Status = TaskStatus.WaitingForActivation;
+                        nextTask.WantsToRun = false;
+                        taskCancellationTokenSources.Remove(nextTask);
                         currentTask.Value = null;
                         threadTasks.Remove(nextTask);
-                        Enqueue(nextTask);
+                        if (ex is OperationPausedException)
+                        {
+                            nextTask.Status = TaskStatus.Created;
+                            Enqueue(nextTask);
+                            continue;
+                        }
+
+                        nextTask.Status = TaskStatus.Canceled;
+                        taskCancellationTokenSources.Remove(nextTask);
+                        currentTask.Value = null;
+                        threadTasks.Remove(nextTask);
                         continue;
                     }
 
@@ -187,7 +212,7 @@ namespace OPOS.P1.Lib.Threading
                 if (dequeued.Status != TaskStatus.RanToCompletion)
                 {
                     var token = taskCancellationTokenSources.GetValueOrDefault(dequeued);
-                    token.Cancel();
+                    token.CancellationTokenSource.Cancel();
                     dequeued.Status = TaskStatus.Canceled;
                 }
 
@@ -198,10 +223,20 @@ namespace OPOS.P1.Lib.Threading
             }
         }
 
+        internal bool Any()
+        {
+            lock (_taskQueueLock)
+            {
+                return taskQueue.Count != 0;
+            }
+        }
+
         internal void PauseTask(CustomTask customTask)
         {
             customTask.WantsToRun = false;
             taskCancellationTokenSources.TryGetValue(customTask, out var cancellationTokenSource);
+
+            cancellationTokenSource.PauseTokenSource.Cancel();
         }
 
         internal void UpdateTaskStatus(CustomTask customTask, TaskStatus taskStatus)
@@ -219,7 +254,7 @@ namespace OPOS.P1.Lib.Threading
             {
                 customTask.WantsToRun = false;
                 taskCancellationTokenSources.TryGetValue(customTask, out var cancellationTokenSource);
-                cancellationTokenSource.Cancel();
+                cancellationTokenSource.CancellationTokenSource.Cancel();
                 return;
             }
 
@@ -233,12 +268,12 @@ namespace OPOS.P1.Lib.Threading
                 customTask.Status = taskStatus;
                 taskQueue.Enqueue(customTask, customTask);
 
-                threadTasks.TryGetValue(customTask, out var thread);
-                if (thread is not null)
-                    thread.Interrupt();
-
                 lock (_threadTasksLock)
                 {
+                    threadTasks.TryGetValue(customTask, out var thread);
+                    if (thread is not null)
+                        thread.Interrupt();
+
                     if (threadTasks.Count == threads.Count)
                         return;
 

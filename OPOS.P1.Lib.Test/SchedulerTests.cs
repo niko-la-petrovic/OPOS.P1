@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Xunit;
 using Xunit.Abstractions;
 using static OPOS.P1.Lib.Threading.CustomScheduler;
+using static OPOS.P1.Lib.Threading.CustomTaskStatusComparer;
 
 namespace OPOS.P1.Lib.Test
 {
@@ -165,11 +166,11 @@ namespace OPOS.P1.Lib.Test
             Assert.True(boolStates.All(s => s));
         }
 
-        public class TaskOperations
+        public class TaskOperationsTests
         {
             private readonly ITestOutputHelper output;
 
-            public TaskOperations(ITestOutputHelper output)
+            public TaskOperationsTests(ITestOutputHelper output)
             {
                 this.output = output;
             }
@@ -196,8 +197,36 @@ namespace OPOS.P1.Lib.Test
                 Thread.Sleep(1000);
 
                 Assert.True(startedRunning);
-                output.WriteLine(task.Status.ToString());
                 Assert.Equal(TaskStatus.Running, task.Status);
+                output.WriteLine(task.Status.ToString());
+            }
+
+            [Fact]
+            public void CanRunTask_QueueEmptyAfter()
+            {
+                GetScheduler(out var maxConcurrentTasks, out var maxCores, out var scheduler);
+
+                CustomTaskTests.GetCustomTaskSettings(out var deadLine, out var maxTaskCores, out var maxRunDuration, out var basePriority, out var customTaskSettings);
+
+                bool startedRunning = false;
+                var task = scheduler.PrepareTask(
+                    new MockCustomTask(
+                        (s, t) =>
+                        {
+                            startedRunning = true;
+                            output.WriteLine("Started run.");
+                            Thread.Sleep(2000);
+                        },
+                        customTaskSettings: customTaskSettings));
+
+                task.Start();
+                Thread.Sleep(1000);
+
+                Assert.True(startedRunning);
+                Assert.Equal(TaskStatus.Running, task.Status);
+                output.WriteLine(task.Status.ToString());
+
+                Assert.False(scheduler.Any());
             }
 
             [Fact]
@@ -245,8 +274,8 @@ namespace OPOS.P1.Lib.Test
                                 output.WriteLine($"Iteration {i++}");
                                 Thread.Sleep(200);
                             }
+                            output.WriteLine("Stopped sleep");
                             t.CancellationToken.ThrowIfCancellationRequested();
-                            output.WriteLine("Timed out.");
                         },
                         customTaskSettings: customTaskSettings));
 
@@ -284,8 +313,8 @@ namespace OPOS.P1.Lib.Test
                                 output.WriteLine($"Iteration {i++}");
                                 Thread.Sleep(200);
                             }
+                            output.WriteLine("Stopped sleep");
                             t.CancellationToken.ThrowIfCancellationRequested();
-                            output.WriteLine("Timed out.");
                         },
                         customTaskSettings: customTaskSettings));
 
@@ -326,8 +355,8 @@ namespace OPOS.P1.Lib.Test
                                 }
                                 catch (ThreadInterruptedException) { }
                             }
+                            output.WriteLine("Stopped sleep");
                             t.CancellationToken.ThrowIfCancellationRequested();
-                            output.WriteLine("Timed out.");
                         },
                         customTaskSettings: customTaskSettings));
 
@@ -335,7 +364,6 @@ namespace OPOS.P1.Lib.Test
                 Thread.Sleep(2500);
                 task.Stop();
                 Thread.Sleep(500);
-
                 output.WriteLine(task.Status.ToString());
                 Assert.Equal(TaskStatus.Canceled, task.Status);
             }
@@ -355,18 +383,17 @@ namespace OPOS.P1.Lib.Test
                             actionRunCount++;
                             var sumState = s as SumState;
                             output.WriteLine("Started run.");
-                            while (!t.CancellationToken.IsCancellationRequested)
+                            while (!t.CancellationToken.IsCancellationRequested
+                                && !t.PauseToken.IsCancellationRequested)
                             {
                                 t.CancellationToken.ThrowIfCancellationRequested();
+                                t.ThrowIfPauseRequested();
                                 output.WriteLine($"Iteration {sumState.Value++}");
-                                try
-                                {
-                                    Thread.Sleep(200);
-                                }
-                                catch (ThreadInterruptedException) { }
+                                Thread.Sleep(200);
                             }
+                            output.WriteLine("Stopped sleep");
                             t.CancellationToken.ThrowIfCancellationRequested();
-                            output.WriteLine("Timed out.");
+                            t.ThrowIfPauseRequested();
                         },
                         state: new SumState
                         {
@@ -379,27 +406,141 @@ namespace OPOS.P1.Lib.Test
                 Assert.Equal(JsonSerializer.Serialize(new SumState { Value = 0 }), serialized);
 
                 task.Start();
-                Thread.Sleep(250);
+                Thread.Sleep(50);
 
                 Assert.Equal(1, actionRunCount);
                 Assert.Equal(TaskStatus.Running, task.Status);
                 output.WriteLine(task.Serialize<SumState>());
 
                 task.Pause();
+                Thread.Sleep(500);
 
                 var state = task.State as SumState;
                 var serializedState = task.Serialize<SumState>();
                 output.WriteLine(serializedState);
                 Assert.Equal(1, actionRunCount);
                 Assert.Equal(TaskStatus.Created, task.Status);
-                Assert.Equal(2, state.Value);
+                Assert.Equal(1, state.Value);
 
-                // TODO
                 task.Continue();
                 Thread.Sleep(250);
 
-                Assert.Equal(5, state.Value);
+                output.WriteLine(task.Serialize<SumState>());
+                Assert.Equal(3, state.Value);
                 Assert.Equal(TaskStatus.Running, task.Status);
+            }
+
+            [Fact]
+            public void CanRealTimeSchedule()
+            {
+                GetScheduler(out var maxConcurrentTasks, out var maxCores, out var scheduler);
+
+                CustomTaskTests.GetCustomTaskSettings(out var deadLine, out var maxTaskCores, out var maxRunDuration, out var basePriority, out var customTaskSettings);
+                customTaskSettings = customTaskSettings with
+                {
+                    Deadline = DateTime.Now.AddMinutes(1),
+                    MaxRunDuration = TimeSpan.FromMinutes(1),
+                };
+
+                var task = scheduler.PrepareTask(
+                    new MockCustomTask(
+                        (s, t) =>
+                        {
+                            output.WriteLine("[1] Started run.");
+                            int i = 0;
+                            while (!t.CancellationToken.IsCancellationRequested)
+                            {
+                                t.CancellationToken.ThrowIfCancellationRequested();
+                                output.WriteLine($"[1] Iteration {i++}");
+                                try
+                                {
+                                    Thread.Sleep(1000);
+                                }
+                                catch (ThreadInterruptedException) { }
+                            }
+                            output.WriteLine("[1] Stopped sleep");
+                            t.CancellationToken.ThrowIfCancellationRequested();
+                        },
+                        customTaskSettings: customTaskSettings));
+
+                task.Start();
+                Thread.Sleep(500);
+
+                Assert.Equal(TaskStatus.Running, task.Status);
+
+                var task1 = scheduler.PrepareTask(
+                    new MockCustomTask(
+                        (s, t) =>
+                        {
+                            output.WriteLine("[2] Started run.");
+                            int i = 0;
+                            while (!t.CancellationToken.IsCancellationRequested)
+                            {
+                                t.CancellationToken.ThrowIfCancellationRequested();
+                                output.WriteLine($"[2] Iteration {i++}");
+                                try
+                                {
+                                    Thread.Sleep(1000);
+                                }
+                                catch (ThreadInterruptedException) { }
+                            }
+                            output.WriteLine("[2] Stopped sleep");
+                            t.CancellationToken.ThrowIfCancellationRequested();
+                        },
+                        customTaskSettings: customTaskSettings));
+
+                Assert.Equal(TaskStatus.Created, task1.Status);
+
+                var task2 = scheduler.PrepareTask(
+                    new MockCustomTask(
+                        (s, t) =>
+                        {
+                            output.WriteLine("[3] Started run.");
+                            int i = 0;
+                            while (!t.CancellationToken.IsCancellationRequested)
+                            {
+                                t.CancellationToken.ThrowIfCancellationRequested();
+                                output.WriteLine($"[3] Iteration {i++}");
+                                try
+                                {
+                                    Thread.Sleep(1000);
+                                }
+                                catch (ThreadInterruptedException) { }
+                            }
+                            output.WriteLine("[3] Stopped sleep");
+                            t.CancellationToken.ThrowIfCancellationRequested();
+                        },
+                        customTaskSettings: customTaskSettings));
+
+                Assert.Equal(TaskStatus.Created, task2.Status);
+
+
+                Assert.Equal(TaskStatus.Running, task.Status);
+                output.WriteLine("[1] Running");
+
+                task1.Start();
+                Thread.Sleep(300);
+
+                Assert.Equal(TaskStatus.Running, task1.Status);
+                output.WriteLine("[2] Running");
+
+                task2.Start();
+                Thread.Sleep(300);
+
+                Assert.Equal(TaskStatus.Running, task.Status);
+                output.WriteLine("[1] Running");
+
+                Assert.Equal(TaskStatus.Running, task1.Status);
+                output.WriteLine("[2] Running");
+
+                Assert.Equal(TaskStatus.Running, task2.Status);
+                output.WriteLine("[3] Running");
+            }
+
+            [Fact]
+            public void CanPreventiveSchedule()
+            {
+                throw new NotImplementedException();
             }
 
             [Fact]
@@ -426,7 +567,7 @@ namespace OPOS.P1.Lib.Test
                                 catch (ThreadInterruptedException) { }
                             }
                             t.CancellationToken.ThrowIfCancellationRequested();
-                            output.WriteLine("Timed out.");
+                            output.WriteLine("Stopped sleep");
                         },
                         customTaskSettings: customTaskSettings));
 
@@ -464,7 +605,7 @@ namespace OPOS.P1.Lib.Test
                                 catch (ThreadInterruptedException) { }
                             }
                             t.CancellationToken.ThrowIfCancellationRequested();
-                            output.WriteLine("Timed out.");
+                            output.WriteLine("Stopped sleep");
                         },
                         state: new SumState
                         {
@@ -509,7 +650,7 @@ namespace OPOS.P1.Lib.Test
                                 catch (ThreadInterruptedException) { }
                             }
                             t.CancellationToken.ThrowIfCancellationRequested();
-                            output.WriteLine("Timed out.");
+                            output.WriteLine("Stopped sleep");
                         },
                         state: initialState,
                         customTaskSettings: customTaskSettings));

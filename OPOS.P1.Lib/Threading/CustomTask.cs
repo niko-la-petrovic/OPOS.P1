@@ -1,10 +1,6 @@
-﻿using OPOS.P1.Lib.Algo;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
-using System.Linq;
-using System.Text;
-using System.Threading;
 using System.Threading.Tasks;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -20,16 +16,84 @@ namespace OPOS.P1.Lib.Threading
         }
     }
 
-    // TODO adjust to consider all the ordering
+    /// <summary>
+    /// CustomTask comparer that use uses task priority only.
+    /// </summary>
     public class CustomTaskPriorityComparer : IComparer<CustomTask>
     {
+        private readonly CustomTaskStatusComparer _statusComparer = new();
+
         public int Compare(CustomTask x, CustomTask y)
         {
-            return x.Settings.Priority > y.Settings.Priority ? -1 : 1;
+            if (x is null && y is null) return 0;
+            else if (x is null)
+                return 1;
+            else if (y is null)
+                return -1;
+
+            var priorityComparison = x.Settings.Priority.CompareTo(y.Settings.Priority);
+
+            return priorityComparison;
         }
     }
 
-    public abstract class CustomTask : Task, ICustomTask
+    /// <summary>
+    /// CustomTask comparer that uses the task status.
+    /// </summary>
+    public class CustomTaskComparer : IComparer<CustomTask>
+    {
+        public int Compare(CustomTask x, CustomTask y)
+        {
+            return CompareTasks(x, y);
+        }
+
+        public static int CompareTasks(CustomTask x, CustomTask y)
+        {
+            return CustomTaskStatusComparer.CompareTaskStatus((TaskStatus)(x?.Status), (TaskStatus)(y?.Status));
+        }
+    }
+
+    /// <summary>
+    /// CustomTask comparer that uses the task status.
+    /// </summary>
+    public class CustomTaskStatusComparer : IComparer<TaskStatus>
+    {
+        public int Compare(TaskStatus x, TaskStatus y)
+        {
+            return CompareTaskStatus(x, y);
+        }
+
+        public static int CompareTaskStatus(TaskStatus x, TaskStatus y)
+        {
+            if (x == y)
+                return 0;
+
+            var tuple = (x, y);
+            var result = tuple switch
+            {
+                (TaskStatus.RanToCompletion, _) => -1,
+                (_, TaskStatus.RanToCompletion) => 1,
+
+                (TaskStatus.Canceled, _) => -1,
+                (_, TaskStatus.Canceled) => 1,
+
+                (TaskStatus.WaitingToRun, _) => -1,
+                (_, TaskStatus.WaitingToRun) => 1,
+
+                (TaskStatus.WaitingForActivation, _) => -1,
+                (_, TaskStatus.WaitingForActivation) => 1,
+
+                (TaskStatus.Created, _) => -1,
+                (_, TaskStatus.Created) => -1,
+
+                _ => 0
+            };
+
+            return result;
+        }
+    }
+
+    public abstract class CustomTask : Task, ICustomTask, IComparable<CustomTask>
     {
         public bool MetDeadline { get; set; }
         public bool WantsToRun { get; set; }
@@ -90,10 +154,8 @@ namespace OPOS.P1.Lib.Threading
             if (Status != TaskStatus.Running)
                 throw new InvalidOperationException($"Cannot pause a task that isn't already running.");
 
-            // TODO don't use update task status or add another method for pausing
-            // TODO custom token for pausing
-            WantsToRun = false;
-            Scheduler.UpdateTaskStatus(this, TaskStatus.Created);
+            Scheduler.PauseTask(this);
+            return;
         }
 
         public void Continue()
@@ -139,6 +201,11 @@ namespace OPOS.P1.Lib.Threading
         public override string ToString()
         {
             return $"Id = {Id}";
+        }
+
+        public int CompareTo(CustomTask other)
+        {
+            return CustomTaskComparer.CompareTasks(this, other);
         }
     }
 }

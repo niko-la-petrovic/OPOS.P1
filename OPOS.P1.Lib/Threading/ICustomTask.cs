@@ -1,6 +1,4 @@
-﻿using System;
-using System.Threading.Tasks;
-using static OPOS.P1.Lib.Threading.CustomScheduler;
+﻿using System.Threading.Tasks;
 
 namespace OPOS.P1.Lib.Threading
 {

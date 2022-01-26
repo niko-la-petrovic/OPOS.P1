@@ -1,15 +1,10 @@
 ﻿using DokanNet;
-using DokanNet.Logging;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
-using System.Text;
-using System.Text.RegularExpressions;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace OPOS.P1.Fs.Lib
 {

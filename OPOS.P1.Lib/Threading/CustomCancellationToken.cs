@@ -1,9 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using System.Threading;
-using System.Threading.Tasks;
 
 namespace OPOS.P1.Lib.Threading
 {
@@ -12,9 +8,22 @@ namespace OPOS.P1.Lib.Threading
         public CancellationToken CancellationToken { get; init; }
         public CancellationToken PauseToken { get; set; }
 
-        public CustomCancellationToken(CancellationToken cancellationToken)
+        public class OperationPausedException : OperationCanceledException
+        {
+        }
+
+        public void ThrowIfPauseRequested()
+        {
+            if (PauseToken.IsCancellationRequested)
+                throw new OperationPausedException();
+        }
+
+        public CustomCancellationToken(
+            CancellationToken cancellationToken,
+            CancellationToken pauseToken)
         {
             CancellationToken = cancellationToken;
+            PauseToken = pauseToken;
         }
 
     }
