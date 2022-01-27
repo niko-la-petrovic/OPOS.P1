@@ -4,6 +4,7 @@ using System.Collections.Immutable;
 using System.Threading.Tasks;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using static OPOS.P1.Lib.Threading.CustomScheduler;
 
 [assembly: InternalsVisibleTo("OPOS.P1.Lib.Test")]
 namespace OPOS.P1.Lib.Threading
@@ -21,8 +22,6 @@ namespace OPOS.P1.Lib.Threading
     /// </summary>
     public class CustomTaskPriorityComparer : IComparer<CustomTask>
     {
-        private readonly CustomTaskStatusComparer _statusComparer = new();
-
         public int Compare(CustomTask x, CustomTask y)
         {
             if (x is null && y is null) return 0;
@@ -34,22 +33,6 @@ namespace OPOS.P1.Lib.Threading
             var priorityComparison = x.Settings.Priority.CompareTo(y.Settings.Priority);
 
             return priorityComparison;
-        }
-    }
-
-    /// <summary>
-    /// CustomTask comparer that uses the task status.
-    /// </summary>
-    public class CustomTaskComparer : IComparer<CustomTask>
-    {
-        public int Compare(CustomTask x, CustomTask y)
-        {
-            return CompareTasks(x, y);
-        }
-
-        public static int CompareTasks(CustomTask x, CustomTask y)
-        {
-            return CustomTaskStatusComparer.CompareTaskStatus((TaskStatus)(x?.Status), (TaskStatus)(y?.Status));
         }
     }
 
@@ -93,14 +76,14 @@ namespace OPOS.P1.Lib.Threading
         }
     }
 
-    public abstract class CustomTask : Task, ICustomTask, IComparable<CustomTask>
+    public abstract class CustomTask : ICustomTask, IComparable<CustomTask>, IEquatable<CustomTask>
     {
         public bool MetDeadline { get; set; }
         public bool WantsToRun { get; set; }
 
         internal CustomScheduler Scheduler { get; set; }
 
-        public new Guid Id { get; init; } = Guid.NewGuid();
+        public Guid Id { get; init; } = Guid.NewGuid();
 
         public CustomTaskSettings Settings { get; init; }
 
@@ -113,13 +96,15 @@ namespace OPOS.P1.Lib.Threading
 
         internal ICustomTaskState State { get; set; }
 
+        internal ImmutableList<CustomResource> CustomResources { get; set; }
+
         public CustomTask(
             Action<ICustomTaskState, CustomCancellationToken> runAction,
             ICustomTaskState state = default,
             CustomTaskSettings customTaskSettings = default,
-            CustomCancellationToken cancellationToken = default,
+            //CustomCancellationToken cancellationToken = default,
             ImmutableList<CustomResource> customResources = null,
-            CustomScheduler scheduler = null) : base(() => runAction(state, cancellationToken))
+            CustomScheduler scheduler = null) /*: base(() => runAction(state, cancellationToken))*/
         {
             Settings = customTaskSettings ?? throw new ArgumentNullException(nameof(customTaskSettings));
 
@@ -130,6 +115,7 @@ namespace OPOS.P1.Lib.Threading
             State = state;
             Run = runAction;
             Scheduler = scheduler;
+            CustomResources = customResources;
         }
 
         int ICustomTask.UsableCores => Settings.MaxCores;
@@ -178,10 +164,7 @@ namespace OPOS.P1.Lib.Threading
 
         public string Serialize<T>() where T : ICustomTaskState
         {
-            string json = null;
-
-            json = JsonSerializer.Serialize((T)State);
-
+            var json = JsonSerializer.Serialize((T)State);
             return json;
         }
 
@@ -200,12 +183,17 @@ namespace OPOS.P1.Lib.Threading
 
         public override string ToString()
         {
-            return $"Id = {Id}";
+            return $"Id = {Id}, Priority = {Settings.Priority}";
         }
 
         public int CompareTo(CustomTask other)
         {
             return CustomTaskComparer.CompareTasks(this, other);
+        }
+
+        bool IEquatable<CustomTask>.Equals(CustomTask other)
+        {
+            return Equals(other);
         }
     }
 }

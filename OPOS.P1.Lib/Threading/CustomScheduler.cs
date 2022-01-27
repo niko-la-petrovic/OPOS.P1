@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
@@ -18,19 +19,27 @@ namespace OPOS.P1.Lib.Threading
         public CustomSchedulerSettings Settings { get; init; }
 
         private readonly object _taskQueueLock = new object();
-        private PriorityQueue<CustomTask, CustomTask> taskQueue =
+        internal PriorityQueue<CustomTask, CustomTask> taskQueue =
             new(new CustomTaskComparer());
 
-        // TODO add lock or use concurrent variant
-        private readonly Dictionary<CustomTask, CustomCancellationTokenSource> taskCancellationTokenSources = new();
+        private readonly ConcurrentDictionary<CustomTask, CustomCancellationTokenSource> taskCancellationTokenSources = new();
 
-        // TODO add lock or use concurrent variant
-        private Dictionary<CustomTask, Thread> threadTasks = new();
-        private readonly object _threadTasksLock = new();
+        internal ConcurrentDictionary<CustomTask, Thread> threadTasks = new();
+        internal ConcurrentDictionary<Thread, CustomThreadState> threadStates = new();
+
+        public record CustomThreadState
+        {
+            public bool WakingUp { get; init; }
+        }
 
         public class CustomTaskComparer : IComparer<CustomTask>
         {
             public int Compare(CustomTask x, CustomTask y)
+            {
+                return CompareTasks(x, y);
+            }
+
+            public static int CompareTasks(CustomTask x, CustomTask y)
             {
                 if (x?.Settings is null && y?.Settings is null)
                     return 0;
@@ -41,10 +50,21 @@ namespace OPOS.P1.Lib.Threading
                 if (y?.Settings is null)
                     return -1;
 
+                if (x.WantsToRun && !y.WantsToRun)
+                    return -1;
+                else if (!x.WantsToRun && y.WantsToRun)
+                    return 1;
+
+                int statusComparison = CustomTaskStatusComparer.CompareTaskStatus((TaskStatus)(x?.Status), (TaskStatus)(y?.Status));
+                if (statusComparison != 0)
+                    return statusComparison;
+
                 int xPriority = x.Settings.Priority;
                 int yPriority = y.Settings.Priority;
 
                 return xPriority > yPriority ? -1 : 1;
+
+                // TODO also compare by number of resources held?
             }
         }
 
@@ -62,6 +82,7 @@ namespace OPOS.P1.Lib.Threading
                 Thread thread = new(ThreadLoop) { Name = $"{nameof(CustomScheduler)}:{i}" };
                 threads.Add(thread);
                 thread.Start();
+                threadStates.TryAdd(thread, new());
             }
         }
 
@@ -85,10 +106,11 @@ namespace OPOS.P1.Lib.Threading
             {
                 taskQueue.Enqueue(customTask, customTask);
 
-                taskCancellationTokenSources.Remove(customTask);
+                taskCancellationTokenSources.Remove(customTask, out _);
 
                 var deadlineInterval = customTask.Settings.Deadline.Subtract(DateTime.Now);
-                var runDurationInterval = customTask.Settings.MaxRunDuration;
+                // TODO use the remaining time, rather than the max run duration
+                var runDurationInterval = customTask.Settings.MaxRunDuration - customTask.TotalRunDuration;
                 var cancelInterval = deadlineInterval < runDurationInterval ? deadlineInterval : runDurationInterval;
                 var source = new CustomCancellationTokenSource
                 {
@@ -96,8 +118,7 @@ namespace OPOS.P1.Lib.Threading
                     PauseTokenSource = new CancellationTokenSource()
                 };
 
-                lock (taskCancellationTokenSources)
-                    taskCancellationTokenSources.Add(customTask, source);
+                taskCancellationTokenSources.TryAdd(customTask, source);
 
                 if (customTask.WantsToRun)
                     customTask.Start();
@@ -112,48 +133,66 @@ namespace OPOS.P1.Lib.Threading
             {
                 bool shouldTakeNextTask = false;
                 CustomTask nextTask = null;
-                lock (_taskQueueLock)
+                try
                 {
-                    if (taskQueue.Count > 0)
-                        shouldTakeNextTask = true;
+                    lock (_taskQueueLock)
+                    {
+                        if (taskQueue.Count > 0)
+                            shouldTakeNextTask = true;
 
-                    taskQueue.TryPeek(out var peekTask, out _);
+                        taskQueue.TryPeek(out var peekTask, out _);
 
-                    if (shouldTakeNextTask
-                        && taskQueue.Count > 0
-                        && peekTask?.Status == TaskStatus.WaitingForActivation
-                        && (peekTask?.WantsToRun ?? false))
-                        nextTask = taskQueue.Dequeue();
-                }
+                        if (shouldTakeNextTask
+                            && taskQueue.Count > 0
+                            && peekTask?.Status == TaskStatus.WaitingForActivation
+                            && (peekTask?.WantsToRun ?? false))
+                            nextTask = taskQueue.Dequeue();
+                    }
 
-                if (nextTask is not null)
-                {
+                    if (nextTask is null)
+                    {
+                        try
+                        {
+                            threadStates.AddOrUpdate(
+                                Thread.CurrentThread,
+                                new CustomThreadState { WakingUp = false },
+                                (t, ts) => new CustomThreadState { WakingUp = false });
+                            Thread.Sleep(Timeout.Infinite);
+                        }
+                        catch (ThreadInterruptedException) { }
+                        continue;
+                    }
+
+                    threadStates.AddOrUpdate(
+                                Thread.CurrentThread,
+                                new CustomThreadState { WakingUp = false },
+                                (t, ts) => new CustomThreadState { WakingUp = false });
                     taskCancellationTokenSources.TryGetValue(nextTask, out var tokenSource);
                     var cancellationToken = tokenSource.CancellationTokenSource.Token;
                     var pauseToken = tokenSource.PauseTokenSource.Token;
                     var token = new CustomCancellationToken(cancellationToken, pauseToken);
 
-
-
+                    threadTasks.TryAdd(nextTask, Thread.CurrentThread);
                     currentTask.Value = nextTask;
 
                     nextTask.Status = TaskStatus.Running;
+                    bool ranNoExceptions = false;
+                    bool preempted = false;
                     try
                     {
                         nextTask.LastStartedRunning = DateTime.Now;
                         try
                         {
                             nextTask.Run(nextTask.State, token);
+                            ranNoExceptions = true;
                         }
                         // TODO handle interrupt
-                        catch (ThreadInterruptedException)
-                        {
-                        }
+                        catch (ThreadInterruptedException) { preempted = true; }
                     }
                     catch (OperationCanceledException ex)
                     {
-                        var lastRunDuration = nextTask.TotalRunDuration.Add(DateTime.Now - nextTask.LastStartedRunning);
-                        nextTask.TotalRunDuration = lastRunDuration;
+                        var newTotalRunDuration = nextTask.TotalRunDuration.Add(DateTime.Now - nextTask.LastStartedRunning);
+                        nextTask.TotalRunDuration = newTotalRunDuration;
 
                         bool reachedDeadline = nextTask.Settings.Deadline <= DateTime.Now;
                         bool reachedMaxRunDuration = nextTask.TotalRunDuration >= nextTask.Settings.MaxRunDuration;
@@ -163,16 +202,16 @@ namespace OPOS.P1.Lib.Threading
                         {
                             nextTask.MetDeadline = reachedDeadline;
                             nextTask.Status = TaskStatus.Canceled;
-                            taskCancellationTokenSources.Remove(nextTask);
+                            taskCancellationTokenSources.Remove(nextTask, out _);
                             currentTask.Value = null;
-                            threadTasks.Remove(nextTask);
+                            threadTasks.Remove(nextTask, out _);
                             continue;
                         }
 
                         nextTask.WantsToRun = false;
-                        taskCancellationTokenSources.Remove(nextTask);
+                        taskCancellationTokenSources.Remove(nextTask, out _);
                         currentTask.Value = null;
-                        threadTasks.Remove(nextTask);
+                        threadTasks.Remove(nextTask, out _);
                         if (ex is OperationPausedException)
                         {
                             nextTask.Status = TaskStatus.Created;
@@ -180,24 +219,35 @@ namespace OPOS.P1.Lib.Threading
                             continue;
                         }
 
+                        // TODO remove duplicated
                         nextTask.Status = TaskStatus.Canceled;
-                        taskCancellationTokenSources.Remove(nextTask);
+                        taskCancellationTokenSources.Remove(nextTask, out _);
                         currentTask.Value = null;
-                        threadTasks.Remove(nextTask);
+                        threadTasks.Remove(nextTask, out _);
+                        continue;
+                    }
+
+                    if (preempted)
+                    {
+                        nextTask.Status = TaskStatus.WaitingForActivation;
+                        lock (_taskQueueLock)
+                            taskQueue.Enqueue(nextTask, nextTask);
+
+                        continue;
+                    }
+
+                    if (!ranNoExceptions)
+                    {
+                        nextTask.Status = TaskStatus.Faulted;
+                        currentTask.Value = null;
                         continue;
                     }
 
                     nextTask.Status = TaskStatus.RanToCompletion;
+                    currentTask.Value = null;
                 }
-                else
-                {
-                    try
-                    {
-                        Thread.Sleep(Timeout.Infinite);
-                    }
-                    catch (ThreadInterruptedException) { }
-                    continue;
-                }
+                // TODO handle interrupt
+                catch (ThreadInterruptedException) { }
             }
         }
 
@@ -211,13 +261,13 @@ namespace OPOS.P1.Lib.Threading
                 var dequeued = taskQueue.Dequeue();
                 if (dequeued.Status != TaskStatus.RanToCompletion)
                 {
-                    var token = taskCancellationTokenSources.GetValueOrDefault(dequeued);
+                    taskCancellationTokenSources.TryGetValue(dequeued, out var token);
+
                     token.CancellationTokenSource.Cancel();
                     dequeued.Status = TaskStatus.Canceled;
                 }
 
-                lock (taskCancellationTokenSources)
-                    taskCancellationTokenSources.Remove(dequeued);
+                taskCancellationTokenSources.Remove(dequeued, out _);
 
                 return dequeued;
             }
@@ -268,21 +318,55 @@ namespace OPOS.P1.Lib.Threading
                 customTask.Status = taskStatus;
                 taskQueue.Enqueue(customTask, customTask);
 
-                lock (_threadTasksLock)
-                {
-                    threadTasks.TryGetValue(customTask, out var thread);
-                    if (thread is not null)
-                        thread.Interrupt();
+                threadTasks.TryGetValue(customTask, out var thread);
+                if (thread is not null)
+                    thread.Interrupt();
 
-                    if (threadTasks.Count == threads.Count)
-                        return;
+                // TODO or if the priority of the currently enqueued task is not higher than that of the other currently running ones
 
-                    var freeThread = threads.Except(threadTasks.Values).FirstOrDefault();
-                    if (freeThread is null)
-                        return;
+                // If no prevention
+                //if (threadTasks.Count == threads.Count)
+                //    return;
 
-                    freeThread.Interrupt();
-                }
+                // TODO find thread thats running the least prioritized task currently and choose it for the interrupt
+                var higherOrEqualPriorityThreads = threadTasks
+                    .Where(p => customTask.CompareTo(p.Key) >= 0 && p.Value is not null && p.Key is not null)
+                    .Select(p => p.Value);
+
+                var freeThread = threadStates
+                    .Where(t => !t.Value.WakingUp)
+                    .Select(t => t.Key)
+                    .Except(higherOrEqualPriorityThreads)
+                    .OrderBy(thread => thread,
+                        new ThreadTaskPriorityComparer(this))
+                    .FirstOrDefault();
+                if (freeThread is null)
+                    return;
+
+                var threadTask = threadTasks.FirstOrDefault(pair => pair.Value == freeThread);
+
+                threadStates.AddOrUpdate(freeThread,
+                    new CustomThreadState { WakingUp = true },
+                    (t, ts) => new CustomThreadState { WakingUp = true });
+                freeThread.Interrupt();
+            }
+        }
+
+        private class ThreadTaskPriorityComparer : IComparer<Thread>
+        {
+            private readonly CustomScheduler scheduler;
+
+            public ThreadTaskPriorityComparer(CustomScheduler scheduler)
+            {
+                this.scheduler = scheduler;
+            }
+
+            public int Compare(Thread x, Thread y)
+            {
+                var pairX = scheduler.threadTasks.FirstOrDefault(pair => pair.Value == x);
+                var pairY = scheduler.threadTasks.FirstOrDefault(pair => pair.Value == y);
+
+                return -CustomTaskComparer.CompareTasks(pairX.Key, pairY.Key);
             }
         }
 
@@ -290,16 +374,16 @@ namespace OPOS.P1.Lib.Threading
         {
             return taskQueue.UnorderedItems
                 .Select(c => c.Element)
-                .ToImmutableSortedSet(new CustomTaskPriorityComparer())
+                .ToImmutableSortedSet(new CustomTaskComparer())
                 .AsEnumerable();
         }
 
-        protected void QueueTask(Task task)
-        {
-            if (task is not CustomTask customTask)
-                throw new NotImplementedException();
-            throw new NotImplementedException();
-        }
+        //protected void QueueTask(Task task)
+        //{
+        //    if (task is not CustomTask customTask)
+        //        throw new NotImplementedException();
+        //    throw new NotImplementedException();
+        //}
 
         protected bool TryExecuteTaskInline(Task task, bool taskWasPreviouslyQueued)
         {

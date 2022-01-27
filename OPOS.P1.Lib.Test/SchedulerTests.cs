@@ -74,8 +74,9 @@ namespace OPOS.P1.Lib.Test
                         })));
 
             tasks.ForEach(t => scheduler.Enqueue(t));
+            var reversedTasks = tasks.Reverse<MockCustomTask>();
 
-            foreach (var task in tasks.Reverse<MockCustomTask>())
+            foreach (var task in reversedTasks)
             {
                 var dequeued = scheduler.Dequeue();
                 Assert.Equal(dequeued, task);
@@ -463,7 +464,15 @@ namespace OPOS.P1.Lib.Test
                         },
                         customTaskSettings: customTaskSettings));
 
+                Assert.Equal(1, scheduler.taskQueue.Count);
+                output.WriteLine($"Tasks in queue: {scheduler.taskQueue.Count}");
+
                 task.Start();
+
+                // Because thread interrupts don't immediately happen and the task action isn't immediately executed, we need a small pause
+                Thread.Sleep(10);
+                Assert.Equal(0, scheduler.taskQueue.Count);
+                output.WriteLine($"Tasks in queue: {scheduler.taskQueue.Count}");
                 Thread.Sleep(500);
 
                 Assert.Equal(TaskStatus.Running, task.Status);
@@ -490,6 +499,8 @@ namespace OPOS.P1.Lib.Test
                         customTaskSettings: customTaskSettings));
 
                 Assert.Equal(TaskStatus.Created, task1.Status);
+                Assert.Equal(1, scheduler.taskQueue.Count);
+                output.WriteLine($"Tasks in queue: {scheduler.taskQueue.Count}");
 
                 var task2 = scheduler.PrepareTask(
                     new MockCustomTask(
@@ -514,21 +525,27 @@ namespace OPOS.P1.Lib.Test
 
                 Assert.Equal(TaskStatus.Created, task2.Status);
 
-
                 Assert.Equal(TaskStatus.Running, task.Status);
                 output.WriteLine("[1] Running");
+                Assert.Equal(2, scheduler.taskQueue.Count);
+                output.WriteLine($"Tasks in queue: {scheduler.taskQueue.Count}");
 
                 task1.Start();
-                Thread.Sleep(300);
+                Thread.Sleep(10);
 
                 Assert.Equal(TaskStatus.Running, task1.Status);
                 output.WriteLine("[2] Running");
+                Assert.Equal(1, scheduler.taskQueue.Count);
+                output.WriteLine($"Tasks in queue: {scheduler.taskQueue.Count}");
 
                 task2.Start();
-                Thread.Sleep(300);
+                Thread.Sleep(10);
 
                 Assert.Equal(TaskStatus.Running, task.Status);
                 output.WriteLine("[1] Running");
+
+                Assert.Equal(0, scheduler.taskQueue.Count);
+                output.WriteLine($"Tasks in queue: {scheduler.taskQueue.Count}");
 
                 Assert.Equal(TaskStatus.Running, task1.Status);
                 output.WriteLine("[2] Running");
@@ -538,9 +555,186 @@ namespace OPOS.P1.Lib.Test
             }
 
             [Fact]
-            public void CanPreventiveSchedule()
+            public void WillEmptyQueueOverTime()
             {
-                throw new NotImplementedException();
+                GetScheduler(out var maxConcurrentTasks, out var maxCores, out var scheduler);
+
+                CustomTaskTests.GetCustomTaskSettings(out var deadLine, out var maxTaskCores, out var maxRunDuration, out var basePriority, out var customTaskSettings);
+                customTaskSettings = customTaskSettings with
+                {
+                    Deadline = DateTime.Now.AddMinutes(1),
+                    MaxRunDuration = TimeSpan.FromSeconds(5),
+                };
+
+                int taskIndex = 1;
+
+                Action<ICustomTaskState, CustomCancellationToken> taskAction(int taskIndex)
+                {
+                    return (s, t) =>
+                    {
+                        int j = taskIndex;
+                        output.WriteLine($"[{j}] Started run.");
+                        int i = 0;
+                        while (!t.CancellationToken.IsCancellationRequested && i < 2)
+                        {
+                            t.CancellationToken.ThrowIfCancellationRequested();
+                            output.WriteLine($"[{taskIndex}] Iteration {i++}");
+                            try
+                            {
+                                Thread.Sleep(1000);
+                            }
+                            catch (ThreadInterruptedException) { }
+                        }
+                        output.WriteLine($"[{taskIndex}] Stopped sleep");
+                        t.CancellationToken.ThrowIfCancellationRequested();
+                    };
+                }
+
+                var task = scheduler.PrepareTask(
+                    new MockCustomTask(taskAction(taskIndex++),
+                    customTaskSettings: customTaskSettings));
+
+                var task1 = scheduler.PrepareTask(
+                    new MockCustomTask(taskAction(taskIndex++),
+                    customTaskSettings: customTaskSettings));
+
+                var task2 = scheduler.PrepareTask(
+                    new MockCustomTask(taskAction(taskIndex++),
+                    customTaskSettings: customTaskSettings));
+
+                var task3 = scheduler.PrepareTask(
+                    new MockCustomTask(taskAction(taskIndex++),
+                    customTaskSettings: customTaskSettings));
+
+                Assert.Equal(4, scheduler.taskQueue.Count);
+
+                task.Start();
+                task1.Start();
+                task2.Start();
+
+                Thread.Sleep(10);
+                Assert.Equal(1, scheduler.taskQueue.Count);
+
+                task3.Start();
+                Thread.Sleep(10);
+                Assert.Equal(1, scheduler.taskQueue.Count);
+                Assert.Equal(TaskStatus.WaitingForActivation, task3.Status);
+
+                Thread.Sleep(TimeSpan.FromSeconds(2.1));
+
+                Assert.Equal(TaskStatus.RanToCompletion, task.Status);
+                Assert.Equal(TaskStatus.RanToCompletion, task1.Status);
+                Assert.Equal(TaskStatus.RanToCompletion, task2.Status);
+
+                Assert.Equal(TaskStatus.Running, task3.Status);
+
+                Thread.Sleep(TimeSpan.FromSeconds(2.1));
+            }
+
+            [Fact]
+            public void CanPreemptiveSchedule()
+            {
+                GetScheduler(out var maxConcurrentTasks, out var maxCores, out var scheduler);
+
+                CustomTaskTests.GetCustomTaskSettings(out var deadLine, out var maxTaskCores, out var maxRunDuration, out var basePriority, out var customTaskSettings);
+                customTaskSettings = customTaskSettings with
+                {
+                    Deadline = DateTime.Now.AddMinutes(10),
+                    MaxRunDuration = TimeSpan.FromMinutes(10),
+                };
+
+                int taskIndex = 1;
+
+                Action<ICustomTaskState, CustomCancellationToken> taskAction(int taskIndex)
+                {
+                    return (s, t) =>
+                    {
+                        int j = taskIndex;
+                        output.WriteLine($"[{j}] Started run.");
+                        int i = 0;
+                        while (!t.CancellationToken.IsCancellationRequested && i < 2)
+                        {
+                            t.CancellationToken.ThrowIfCancellationRequested();
+                            output.WriteLine($"[{taskIndex}] Iteration {i++}");
+                            // TODO remove ThreadInterruptExceptions from this similar blocks
+                            Thread.Sleep(1000);
+                        }
+                        output.WriteLine($"[{taskIndex}] Stopped sleep");
+                        t.CancellationToken.ThrowIfCancellationRequested();
+                    };
+                }
+
+                var task = scheduler.PrepareTask(
+                    new MockCustomTask(taskAction(taskIndex++),
+                    customTaskSettings: customTaskSettings with { Priority = basePriority++ }));
+
+                var task1 = scheduler.PrepareTask(
+                    new MockCustomTask(taskAction(taskIndex++),
+                    customTaskSettings: customTaskSettings with { Priority = basePriority++ }));
+
+                var task2 = scheduler.PrepareTask(
+                    new MockCustomTask(taskAction(taskIndex++),
+                    customTaskSettings: customTaskSettings with { Priority = basePriority++ }));
+
+                var task3 = scheduler.PrepareTask(
+                    new MockCustomTask(taskAction(taskIndex++),
+                    customTaskSettings: customTaskSettings with { Priority = basePriority++ }));
+
+                // Ensure expected task queue state
+
+                Assert.Equal(4, scheduler.taskQueue.Count);
+
+                Assert.Equal(task3, scheduler.taskQueue.Peek());
+                Assert.Equal(task, scheduler.GetScheduledTasks().Last());
+
+                Assert.Equal(task1, scheduler.GetScheduledTasks().SkipLast(1).Last());
+                Assert.Equal(task2, scheduler.GetScheduledTasks().Skip(1).First());
+
+                // Use up thread pool threads with lower priority tasks
+
+                task.Start();
+                task1.Start();
+                task2.Start();
+
+                // Ensure threads pool threads are used and that the highest priority task has not been considered for scheduling yet
+                Thread.Sleep(40);
+                Assert.Equal(TaskStatus.Running, task.Status);
+                Assert.Equal(TaskStatus.Running, task1.Status);
+                Assert.Equal(TaskStatus.Running, task2.Status);
+                Assert.Equal(TaskStatus.Created, task3.Status);
+
+                //  When a higher priority task is started, the thread running the lowest priority task will be interrupted and scheduled to execute it
+                task3.Start();
+
+                Thread.Sleep(40);
+                // task has lowest priority, so it's waiting to be scheduled once its thread preempts task3 with higher priority
+                Assert.Equal(TaskStatus.WaitingForActivation, task.Status);
+                Assert.Equal(TaskStatus.Running, task1.Status);
+                Assert.Equal(TaskStatus.Running, task2.Status);
+                Assert.Equal(TaskStatus.Running, task3.Status);
+
+                Thread.Sleep(TimeSpan.FromSeconds(1));
+
+                // First iteration completed for task3
+                Assert.Equal(TaskStatus.WaitingForActivation, task.Status);
+                Assert.Equal(TaskStatus.Running, task1.Status);
+                Assert.Equal(TaskStatus.Running, task2.Status);
+                Assert.Equal(TaskStatus.Running, task3.Status);
+
+                // Second iteration completed for task3 - finished, as well as task1 and task2
+                // task begins executing since task3's thread has been freed up and it's the only task left in the queue
+                Thread.Sleep(TimeSpan.FromSeconds(1));
+                Assert.Equal(TaskStatus.Running, task.Status);
+                Assert.Equal(TaskStatus.RanToCompletion, task1.Status);
+                Assert.Equal(TaskStatus.RanToCompletion, task2.Status);
+                Assert.Equal(TaskStatus.RanToCompletion, task3.Status);
+
+                // Ensure everything has completed
+                Thread.Sleep(TimeSpan.FromSeconds(2));
+                Assert.Equal(TaskStatus.RanToCompletion, task.Status);
+                Assert.Equal(TaskStatus.RanToCompletion, task1.Status);
+                Assert.Equal(TaskStatus.RanToCompletion, task2.Status);
+                Assert.Equal(TaskStatus.RanToCompletion, task3.Status);
             }
 
             [Fact]
