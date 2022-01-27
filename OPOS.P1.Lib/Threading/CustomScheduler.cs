@@ -26,6 +26,8 @@ namespace OPOS.P1.Lib.Threading
 
         internal ConcurrentDictionary<CustomTask, Thread> threadTasks = new();
         internal ConcurrentDictionary<Thread, CustomThreadState> threadStates = new();
+        internal ConcurrentDictionary<string, CustomResource> customResources = new();
+        internal ConcurrentDictionary<string, CancellationTokenSource> customResourceTokenSources = new();
 
         public record CustomThreadState
         {
@@ -90,8 +92,59 @@ namespace OPOS.P1.Lib.Threading
             where TCustomTask : CustomTask
         {
             customTask.Scheduler = this;
+
+            if (customTask.CustomResources is not null)
+                foreach (var customResource in customTask.CustomResources)
+                    customResources.TryAdd(customResource.Uri, customResource);
+
             Enqueue(customTask);
             return customTask;
+        }
+
+        public CustomResource FindCustomResource(string uri)
+        {
+            var existingResource = customResources.GetValueOrDefault(uri);
+            return existingResource;
+        }
+
+        internal void LockResourceAndAct(CustomResource customResource, Action action)
+        {
+            LockResourceAndAct(customResource.Uri, action);
+        }
+
+        internal void LockResourceAndAct(string uri, Action action)
+        {
+            customResources.TryGetValue(uri, out var customResource);
+            var source = taskCancellationTokenSources.GetValueOrDefault(currentTask.Value);
+
+            var pauseTokenSource = source.PauseTokenSource;
+            var cancellationTokenSource = source.PauseTokenSource;
+
+            var pauseToken = pauseTokenSource.Token;
+            var cancellationToken = cancellationTokenSource.Token;
+
+            // TODO catch exception being thrown?
+            using (cancellationToken.Register(() => cancellationToken.ThrowIfCancellationRequested()))
+            {
+                // TODO do the same thing if paused?
+                // TODO move lock outside?
+                bool acquired = false;
+                while (!acquired)
+                {
+                    try
+                    {
+                        acquired = Monitor.TryEnter(customResource, TimeSpan.FromSeconds(0.1));
+                        if (acquired)
+                        {
+                            action();
+                        }
+                    }
+                    finally
+                    {
+                        Monitor.Exit(customResource);
+                    }
+                }
+            }
         }
 
         public void Enqueue(CustomTask customTask)

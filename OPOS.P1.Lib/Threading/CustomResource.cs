@@ -1,8 +1,9 @@
 ﻿using System;
+using System.IO;
 
 namespace OPOS.P1.Lib.Threading
 {
-    public class CustomResource
+    public abstract class CustomResource
     {
         public string Uri { get; init; }
 
@@ -20,6 +21,16 @@ namespace OPOS.P1.Lib.Threading
         public override int GetHashCode()
         {
             return HashCode.Combine(Uri);
+        }
+
+
+        //public abstract void Initialize();
+    }
+
+    public class CustomResourceFile : CustomResource
+    {
+        public CustomResourceFile(string uri) : base(uri)
+        {
         }
     }
 }

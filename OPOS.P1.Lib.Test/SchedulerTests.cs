@@ -1,6 +1,8 @@
 ﻿using OPOS.P1.Lib.Threading;
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
@@ -18,7 +20,9 @@ namespace OPOS.P1.Lib.Test
         public MockCustomTask(
             Action<ICustomTaskState, CustomCancellationToken> runAction = default,
             ICustomTaskState state = default,
-            CustomTaskSettings customTaskSettings = default) : base(runAction, state, customTaskSettings)
+            CustomTaskSettings customTaskSettings = default,
+            ImmutableList<CustomResource> customResources = default)
+            : base(runAction, state, customTaskSettings, customResources)
         {
         }
 
@@ -169,6 +173,11 @@ namespace OPOS.P1.Lib.Test
 
         public class TaskOperationsTests
         {
+            private const string testFile = "test.txt";
+            private const string testFile1 = "test1.txt";
+            private const string testFile2 = "test2.txt";
+            private const string testFile3 = "test3.txt";
+
             private readonly ITestOutputHelper output;
 
             public TaskOperationsTests(ITestOutputHelper output)
@@ -855,6 +864,65 @@ namespace OPOS.P1.Lib.Test
 
                 task.Start();
                 Thread.Sleep(1000);
+            }
+
+            [Fact]
+            public void CanLockResource()
+            {
+                GetScheduler(out var maxConcurrentTasks, out var maxCores, out var scheduler);
+
+                CustomTaskTests.GetCustomTaskSettings(out var deadLine, out var maxTaskCores, out var maxRunDuration, out var basePriority, out var customTaskSettings);
+
+                var customResourceFile = new CustomResourceFile(testFile1);
+
+                var task = scheduler.PrepareTask(
+                    new MockCustomTask(
+                        (s, t) =>
+                        {
+                            output.WriteLine("Started run.");
+                            int i = 0;
+                            while (!t.CancellationToken.IsCancellationRequested && i < 2)
+                            {
+                                t.CancellationToken.ThrowIfCancellationRequested();
+                                output.WriteLine($"Iteration {i++}");
+                                try
+                                {
+                                    scheduler.LockResourceAndAct(customResourceFile, () =>
+                                    {
+                                        using var fs = File.OpenRead(customResourceFile.Uri);
+                                        using var reader = new StreamReader(fs);
+                                        output.WriteLine(reader.ReadToEnd());
+                                    });
+                                    Thread.Sleep(200);
+                                }
+                                catch (ThreadInterruptedException) { }
+                            }
+                            t.CancellationToken.ThrowIfCancellationRequested();
+                            output.WriteLine("Stopped sleep");
+                        },
+                        customResources: ImmutableList.Create<CustomResource>(customResourceFile),
+                        customTaskSettings: customTaskSettings));
+
+                task.Start();
+                Thread.Sleep(TimeSpan.FromSeconds(2));
+            }
+
+            [Fact]
+            public void CanLockMultipleResources()
+            {
+                throw new NotImplementedException();
+            }
+
+            [Fact]
+            public void CanCancelTaskWithResourceRelease()
+            {
+                throw new NotImplementedException();
+            }
+
+            [Fact]
+            public void CanDeadlockSameResource()
+            {
+                throw new NotImplementedException();
             }
         }
 
