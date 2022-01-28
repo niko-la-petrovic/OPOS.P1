@@ -23,6 +23,10 @@ namespace OPOS.P1.Lib.Threading
             return HashCode.Combine(Uri);
         }
 
+        public override string ToString()
+        {
+            return $"Uri = {Uri}";
+        }
 
         //public abstract void Initialize();
     }

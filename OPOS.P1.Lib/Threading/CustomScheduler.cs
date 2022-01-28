@@ -11,23 +11,27 @@ namespace OPOS.P1.Lib.Threading
 {
     public class CustomScheduler : IDisposable
     {
+        private const int lockTimeoutMillis = 10;
         private bool disposed;
-        private ThreadLocal<CustomTask> currentTask = new();
+        private readonly ThreadLocal<CustomTask> currentTask = new();
 
-        private List<Thread> threads;
+        private readonly List<Thread> threads;
 
         public CustomSchedulerSettings Settings { get; init; }
 
-        private readonly object _taskQueueLock = new object();
+        private readonly object _taskQueueLock = new();
         internal PriorityQueue<CustomTask, CustomTask> taskQueue =
             new(new CustomTaskComparer());
 
         private readonly ConcurrentDictionary<CustomTask, CustomCancellationTokenSource> taskCancellationTokenSources = new();
 
-        internal ConcurrentDictionary<CustomTask, Thread> threadTasks = new();
-        internal ConcurrentDictionary<Thread, CustomThreadState> threadStates = new();
-        internal ConcurrentDictionary<string, CustomResource> customResources = new();
-        internal ConcurrentDictionary<string, CancellationTokenSource> customResourceTokenSources = new();
+        internal readonly ConcurrentDictionary<CustomTask, Thread> threadTasks = new();
+        internal readonly ConcurrentDictionary<Thread, CustomThreadState> threadStates = new();
+        internal readonly ConcurrentDictionary<string, CustomResource> customResources = new();
+        private readonly object _customResourcesLock = new();
+
+        internal readonly ConcurrentDictionary<string, CancellationTokenSource> customResourceTokenSources = new();
+
 
         public record CustomThreadState
         {
@@ -112,11 +116,89 @@ namespace OPOS.P1.Lib.Threading
             LockResourceAndAct(customResource.Uri, action);
         }
 
+        internal void LockResourcesAndAct(ImmutableList<CustomResource> requestedResources, Action action)
+        {
+            if (!requestedResources.Any())
+                throw new ArgumentException($"The {nameof(requestedResources)} cannot be empty.", nameof(requestedResources));
+
+            var existingResources = requestedResources
+                .Select(customResource =>
+                    {
+                        customResources.TryGetValue(customResource.Uri, out var existingCustomResource);
+                        return existingCustomResource;
+                    })
+                .ToList();
+
+            if (existingResources.Count != requestedResources.Count)
+                throw new ArgumentException($"One of the {nameof(requestedResources)} was not obtained in the current task context {currentTask.Value}", nameof(requestedResources));
+
+            var source = taskCancellationTokenSources.GetValueOrDefault(currentTask.Value);
+
+            var pauseTokenSource = source.PauseTokenSource;
+            var cancellationTokenSource = source.PauseTokenSource;
+
+            var pauseToken = pauseTokenSource.Token;
+            var cancellationToken = cancellationTokenSource.Token;
+
+            using (cancellationToken.Register(() => cancellationToken.ThrowIfCancellationRequested()))
+            {
+                bool acquiredAll = false;
+                bool[] acquiredArr = new bool[existingResources.Count];
+                bool acquiredResourceLock = false;
+
+                try
+                {
+                    while (!acquiredAll)
+                    {
+                        try
+                        {
+                            acquiredResourceLock = Monitor.TryEnter(customResources, TimeSpan.FromMilliseconds(lockTimeoutMillis));
+                            if (!acquiredResourceLock)
+                                continue;
+
+                            for (int i = 0; i < existingResources.Count; i++)
+                            {
+                                var resource = existingResources[i];
+                                bool acquired = false;
+                                while (!acquired)
+                                {
+                                    acquired = Monitor.TryEnter(resource, TimeSpan.FromMilliseconds(lockTimeoutMillis));
+                                    acquiredArr[i] = acquired;
+                                    //if (!acquired)
+                                    //{
+                                    //}
+                                }
+                            }
+                        }
+                        finally
+                        {
+                            if (acquiredResourceLock)
+                                Monitor.Exit(customResources);
+                        }
+
+                        acquiredAll = true;
+                    }
+
+                    action();
+                }
+                finally
+                {
+                    for (int i = 0; i < existingResources.Count; i++)
+                    {
+                        if (acquiredArr[i])
+                            Monitor.Exit(existingResources[i]);
+                    }
+                }
+            }
+        }
+
         internal void LockResourceAndAct(string uri, Action action)
         {
             customResources.TryGetValue(uri, out var customResource);
-            var source = taskCancellationTokenSources.GetValueOrDefault(currentTask.Value);
+            if (!(currentTask.Value?.CustomResources?.Contains(customResource) ?? false))
+                throw new ArgumentException($"Resource {uri} is not owned by current task context '{currentTask.Value}'.", nameof(uri));
 
+            var source = taskCancellationTokenSources.GetValueOrDefault(currentTask.Value);
             var pauseTokenSource = source.PauseTokenSource;
             var cancellationTokenSource = source.PauseTokenSource;
 
@@ -127,21 +209,36 @@ namespace OPOS.P1.Lib.Threading
             using (cancellationToken.Register(() => cancellationToken.ThrowIfCancellationRequested()))
             {
                 // TODO do the same thing if paused?
-                // TODO move lock outside?
                 bool acquired = false;
+                bool acquiredResourceLock = false;
                 while (!acquired)
                 {
                     try
                     {
-                        acquired = Monitor.TryEnter(customResource, TimeSpan.FromSeconds(0.1));
-                        if (acquired)
+                        try
                         {
-                            action();
+                            acquiredResourceLock = Monitor.TryEnter(customResources, TimeSpan.FromMilliseconds(lockTimeoutMillis));
+
+                            if (!acquiredResourceLock)
+                                continue;
+
+                            acquired = Monitor.TryEnter(customResource, TimeSpan.FromMilliseconds(lockTimeoutMillis));
+
+                            if (!acquired)
+                                continue;
                         }
+                        finally
+                        {
+                            if (acquiredResourceLock)
+                                Monitor.Exit(customResources);
+                        }
+
+                        action();
                     }
                     finally
                     {
-                        Monitor.Exit(customResource);
+                        if (acquired)
+                            Monitor.Exit(customResource);
                     }
                 }
             }
@@ -255,6 +352,7 @@ namespace OPOS.P1.Lib.Threading
                         {
                             nextTask.MetDeadline = reachedDeadline;
                             nextTask.Status = TaskStatus.Canceled;
+                            // TODO replace with method that also disposes both the cancellationton sources
                             taskCancellationTokenSources.Remove(nextTask, out _);
                             currentTask.Value = null;
                             threadTasks.Remove(nextTask, out _);
@@ -278,6 +376,10 @@ namespace OPOS.P1.Lib.Threading
                         currentTask.Value = null;
                         threadTasks.Remove(nextTask, out _);
                         continue;
+                    }
+                    catch (Exception ex)
+                    {
+                        nextTask.Exception = new AggregateException(ex);
                     }
 
                     if (preempted)

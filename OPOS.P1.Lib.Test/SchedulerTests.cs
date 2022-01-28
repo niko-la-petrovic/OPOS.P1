@@ -867,13 +867,122 @@ namespace OPOS.P1.Lib.Test
             }
 
             [Fact]
+            public void CanManuallyForceDeadlock()
+            {
+                GetScheduler(out var maxConcurrentTasks, out var maxCores, out var scheduler);
+
+                CustomTaskTests.GetCustomTaskSettings(out var deadLine, out var maxTaskCores, out var maxRunDuration, out var basePriority, out var customTaskSettings);
+
+                customTaskSettings = customTaskSettings with
+                {
+                    Deadline = DateTime.Now.AddMinutes(10),
+                    MaxRunDuration = Timeout.InfiniteTimeSpan,
+                };
+
+                var customResourceFile = new CustomResourceFile(testFile);
+                var customResourceFile1 = new CustomResourceFile(testFile1);
+                var customResourceFile2 = new CustomResourceFile(testFile2);
+                var customResourceFile3 = new CustomResourceFile(testFile3);
+
+                var customResources = ImmutableList.Create<CustomResource>(
+                    customResourceFile,
+                    customResourceFile1,
+                    customResourceFile2,
+                    customResourceFile3);
+
+                var customResources1 = customResources.Reverse();
+
+                int taskIndex = 1;
+
+                var task = scheduler.PrepareTask(
+                    new MockCustomTask(
+                        taskAction(scheduler, customResources, taskIndex++),
+                        customResources: customResources,
+                        customTaskSettings: customTaskSettings));
+
+                var task1 = scheduler.PrepareTask(
+                    new MockCustomTask(
+                        taskAction(scheduler, customResources1, taskIndex++),
+                        customResources: customResources,
+                        customTaskSettings: customTaskSettings));
+
+                task.Start();
+                task1.Start();
+                Thread.Sleep(TimeSpan.FromSeconds(6));
+
+                Assert.Equal(TaskStatus.Running, task.Status);
+                Assert.Equal(TaskStatus.Running, task1.Status);
+
+                Action<ICustomTaskState, CustomCancellationToken> taskAction(CustomScheduler scheduler, ImmutableList<CustomResource> customResources, int taskIndex)
+                {
+                    return (s, t) =>
+                    {
+                        int ti = taskIndex;
+                        var _customResources = customResources;
+                        output.WriteLine("Started run.");
+                        int i = 0;
+                        int lockCount = 0;
+                        while (!t.CancellationToken.IsCancellationRequested && i < 1)
+                        {
+                            t.CancellationToken.ThrowIfCancellationRequested();
+                            output.WriteLine($"[{ti}] Iteration {i++}");
+                            try
+                            {
+                                // first lock
+                                output.WriteLine($"[{ti}] Waiting for lock {lockCount} '{_customResources[0]}'");
+                                scheduler.LockResourceAndAct(_customResources[0], () =>
+                                {
+                                    output.WriteLine($"[{ti}] Obtained lock {lockCount++} '{_customResources[0]}'");
+
+                                    using var fs = File.OpenRead(customResources[0].Uri);
+                                    using var reader = new StreamReader(fs);
+                                    output.WriteLine(reader.ReadToEnd());
+
+                                    // second lock
+                                    output.WriteLine($"[{ti}] Waiting for lock {lockCount} '{_customResources[1]}'");
+                                    scheduler.LockResourceAndAct(_customResources[1], () =>
+                                    {
+                                        output.WriteLine($"[{ti}] Obtained lock {lockCount++} '{_customResources[1]}'");
+
+                                        using var fs = File.OpenRead(_customResources[1].Uri);
+                                        using var reader = new StreamReader(fs);
+                                        output.WriteLine(reader.ReadToEnd());
+
+                                        // third lock
+                                        output.WriteLine($"[{ti}] Waiting for lock {lockCount} '{_customResources[2]}'");
+                                        scheduler.LockResourceAndAct(_customResources[2], () =>
+                                        {
+                                            output.WriteLine($"[{ti}] Obtained lock {lockCount++} '{_customResources[2]}'");
+
+                                            using var fs = File.OpenRead(_customResources[2].Uri);
+                                            using var reader = new StreamReader(fs);
+                                            output.WriteLine(reader.ReadToEnd());
+
+                                            Thread.Sleep(Timeout.Infinite);
+                                        });
+                                        output.WriteLine($"[{ti}] Released lock {--lockCount}");
+                                    });
+                                    output.WriteLine($"[{ti}] Released lock {--lockCount}");
+
+                                });
+                                output.WriteLine($"[{ti}] Released lock {--lockCount}");
+                            }
+                            catch (ThreadInterruptedException) { }
+                        }
+                        t.CancellationToken.ThrowIfCancellationRequested();
+                        output.WriteLine($"[{ti}] Stopped sleep");
+                    };
+                }
+            }
+
+            [Fact]
             public void CanLockResource()
             {
                 GetScheduler(out var maxConcurrentTasks, out var maxCores, out var scheduler);
 
                 CustomTaskTests.GetCustomTaskSettings(out var deadLine, out var maxTaskCores, out var maxRunDuration, out var basePriority, out var customTaskSettings);
 
-                var customResourceFile = new CustomResourceFile(testFile1);
+                var customResourceFile = new CustomResourceFile(testFile);
 
                 var task = scheduler.PrepareTask(
                     new MockCustomTask(
@@ -887,13 +996,16 @@ namespace OPOS.P1.Lib.Test
                                 output.WriteLine($"Iteration {i++}");
                                 try
                                 {
+                                    output.WriteLine($"Waiting for lock");
                                     scheduler.LockResourceAndAct(customResourceFile, () =>
                                     {
+                                        output.WriteLine($"Obtained lock");
                                         using var fs = File.OpenRead(customResourceFile.Uri);
                                         using var reader = new StreamReader(fs);
                                         output.WriteLine(reader.ReadToEnd());
+                                        Thread.Sleep(200);
                                     });
-                                    Thread.Sleep(200);
+                                    output.WriteLine($"Released lock");
                                 }
                                 catch (ThreadInterruptedException) { }
                             }
@@ -904,25 +1016,420 @@ namespace OPOS.P1.Lib.Test
                         customTaskSettings: customTaskSettings));
 
                 task.Start();
-                Thread.Sleep(TimeSpan.FromSeconds(2));
+                Thread.Sleep(TimeSpan.FromMilliseconds(430));
+
+                Assert.Equal(TaskStatus.RanToCompletion, task.Status);
             }
 
             [Fact]
-            public void CanLockMultipleResources()
+            public void CantLockUnregisteredResource()
             {
-                throw new NotImplementedException();
+                GetScheduler(out var maxConcurrentTasks, out var maxCores, out var scheduler);
+
+                CustomTaskTests.GetCustomTaskSettings(out var deadLine, out var maxTaskCores, out var maxRunDuration, out var basePriority, out var customTaskSettings);
+
+                customTaskSettings = customTaskSettings with
+                {
+                    Deadline = DateTime.Now.AddMinutes(10),
+                    MaxRunDuration = Timeout.InfiniteTimeSpan,
+                };
+
+                var customResourceFile = new CustomResourceFile(testFile);
+
+                var task = scheduler.PrepareTask(
+                    new MockCustomTask(
+                        (s, t) =>
+                        {
+                            output.WriteLine("Started run.");
+                            int i = 0;
+                            while (!t.CancellationToken.IsCancellationRequested && i < 2)
+                            {
+                                t.CancellationToken.ThrowIfCancellationRequested();
+                                output.WriteLine($"Iteration {i++}");
+                                try
+                                {
+                                    output.WriteLine($"Waiting for lock");
+                                    var ex = Assert.Throws<ArgumentException>(() =>
+                                    {
+                                        scheduler.LockResourceAndAct(customResourceFile, () =>
+                                        {
+                                            output.WriteLine($"Obtained lock");
+                                            using var fs = File.OpenRead(customResourceFile.Uri);
+                                            using var reader = new StreamReader(fs);
+                                            output.WriteLine(reader.ReadToEnd());
+                                            Thread.Sleep(200);
+                                        });
+                                        output.WriteLine($"Released lock");
+                                    });
+                                    output.WriteLine(ex.Message);
+                                    throw ex;
+                                }
+                                catch (ThreadInterruptedException) { }
+                            }
+                            t.CancellationToken.ThrowIfCancellationRequested();
+                            output.WriteLine("Stopped sleep");
+                        },
+                        customTaskSettings: customTaskSettings));
+
+                task.Start();
+                Thread.Sleep(TimeSpan.FromSeconds(2));
+
+                Assert.Equal(TaskStatus.Faulted, task.Status);
+            }
+
+            [Fact]
+            public void CanAvoidDeadlockMultipleResources()
+            {
+                GetScheduler(out var maxConcurrentTasks, out var maxCores, out var scheduler);
+
+                CustomTaskTests.GetCustomTaskSettings(out var deadLine, out var maxTaskCores, out var maxRunDuration, out var basePriority, out var customTaskSettings);
+
+                customTaskSettings = customTaskSettings with
+                {
+                    Deadline = DateTime.Now.AddMinutes(2),
+                    MaxRunDuration = TimeSpan.FromMinutes(2),
+                };
+
+                var customResourceFile = new CustomResourceFile(testFile);
+                var customResourceFile1 = new CustomResourceFile(testFile1);
+                var customResourceFile2 = new CustomResourceFile(testFile2);
+                var customResourceFile3 = new CustomResourceFile(testFile3);
+
+                ImmutableList<CustomResource> customResources = ImmutableList.Create<CustomResource>(
+                    customResourceFile,
+                    customResourceFile1,
+                    customResourceFile2);
+
+                var timeout = TimeSpan.FromMilliseconds(200);
+
+                int taskIndex = 1;
+
+                var task = scheduler.PrepareTask(
+                    new MockCustomTask(
+                        taskAction(scheduler, customResources, timeout, taskIndex++),
+                        customResources: customResources,
+                        customTaskSettings: customTaskSettings));
+
+                var task1 = scheduler.PrepareTask(
+                    new MockCustomTask(
+                        taskAction(scheduler, customResources, timeout, taskIndex++),
+                        customResources: customResources,
+                        customTaskSettings: customTaskSettings));
+
+                task.Start();
+                task1.Start();
+                Thread.Sleep(TimeSpan.FromSeconds(1.2));
+
+                Assert.Equal(TaskStatus.RanToCompletion, task.Status);
+
+                Action<ICustomTaskState, CustomCancellationToken> taskAction(
+                    CustomScheduler scheduler,
+                    ImmutableList<CustomResource> customResources,
+                    TimeSpan timeout,
+                    int taskIndex)
+                {
+                    return (s, t) =>
+                    {
+                        int ti = taskIndex;
+                        output.WriteLine("Started run.");
+                        int i = 0;
+                        while (!t.CancellationToken.IsCancellationRequested && i < 2)
+                        {
+                            t.CancellationToken.ThrowIfCancellationRequested();
+                            output.WriteLine($"[{ti}] Iteration {i++}");
+                            try
+                            {
+                                output.WriteLine($"[{ti}] Waiting for lock");
+                                scheduler.LockResourcesAndAct(customResources, () =>
+                                {
+                                    output.WriteLine($"[{ti}] Obtained lock");
+                                    foreach (var item in customResources)
+                                    {
+                                        using var fs = File.OpenRead(item.Uri);
+                                        using var reader = new StreamReader(fs);
+                                        output.WriteLine(reader.ReadToEnd());
+                                    }
+
+                                    Thread.Sleep(timeout);
+                                });
+                                output.WriteLine($"[{ti}] Released lock");
+                            }
+                            catch (ThreadInterruptedException) { }
+                        }
+                        t.CancellationToken.ThrowIfCancellationRequested();
+                        output.WriteLine($"[{ti}] Stopped sleep");
+                    };
+                }
+            }
+
+            [Fact]
+            public void CanLockMultipleResourcesSimultaneously()
+            {
+                GetScheduler(out var maxConcurrentTasks, out var maxCores, out var scheduler);
+
+                CustomTaskTests.GetCustomTaskSettings(out var deadLine, out var maxTaskCores, out var maxRunDuration, out var basePriority, out var customTaskSettings);
+
+                customTaskSettings = customTaskSettings with
+                {
+                    Deadline = DateTime.Now.AddMinutes(1),
+                    MaxRunDuration = TimeSpan.FromMinutes(1),
+                };
+
+                var customResourceFile = new CustomResourceFile(testFile);
+                var customResourceFile1 = new CustomResourceFile(testFile1);
+                var customResourceFile2 = new CustomResourceFile(testFile2);
+
+                ImmutableList<CustomResource> customResources = ImmutableList.Create<CustomResource>(
+                    customResourceFile,
+                    customResourceFile1,
+                    customResourceFile2);
+
+                var task = scheduler.PrepareTask(
+                    new MockCustomTask(
+                        (s, t) =>
+                        {
+                            output.WriteLine("Started run.");
+                            int i = 0;
+                            while (!t.CancellationToken.IsCancellationRequested && i < 2)
+                            {
+                                t.CancellationToken.ThrowIfCancellationRequested();
+                                output.WriteLine($"Iteration {i++}");
+                                try
+                                {
+                                    output.WriteLine($"Waiting for lock");
+                                    scheduler.LockResourcesAndAct(customResources, () =>
+                                    {
+                                        output.WriteLine($"Obtained lock");
+                                        foreach (var item in customResources)
+                                        {
+                                            using var fs = File.OpenRead(item.Uri);
+                                            using var reader = new StreamReader(fs);
+                                            output.WriteLine(reader.ReadToEnd());
+                                        }
+
+                                        Thread.Sleep(200);
+                                    });
+                                    output.WriteLine($"Released lock");
+                                }
+                                catch (ThreadInterruptedException) { }
+                            }
+                            t.CancellationToken.ThrowIfCancellationRequested();
+                            output.WriteLine("Stopped sleep");
+                        },
+                        customResources: customResources,
+                        customTaskSettings: customTaskSettings));
+
+                task.Start();
+                Thread.Sleep(TimeSpan.FromSeconds(0.500));
+
+                Assert.Equal(TaskStatus.RanToCompletion, task.Status);
+            }
+
+            [Fact]
+            public void CanTimeoutTaskWithResourceRelease()
+            {
+                GetScheduler(out var maxConcurrentTasks, out var maxCores, out var scheduler);
+
+                CustomTaskTests.GetCustomTaskSettings(out var deadLine, out var maxTaskCores, out var maxRunDuration, out var basePriority, out var customTaskSettings);
+
+                var customResourceFile = new CustomResourceFile(testFile);
+
+                var task = scheduler.PrepareTask(
+                    new MockCustomTask(
+                        (s, t) =>
+                        {
+                            output.WriteLine("Started run.");
+                            int i = 0;
+                            while (!t.CancellationToken.IsCancellationRequested && i < 2)
+                            {
+                                t.CancellationToken.ThrowIfCancellationRequested();
+                                output.WriteLine($"Iteration {i++}");
+                                try
+                                {
+                                    output.WriteLine($"Waiting for lock");
+                                    scheduler.LockResourceAndAct(customResourceFile, () =>
+                                    {
+                                        output.WriteLine($"Obtained lock");
+                                        using var fs = File.OpenRead(customResourceFile.Uri);
+                                        using var reader = new StreamReader(fs);
+                                        output.WriteLine(reader.ReadToEnd());
+                                        Thread.Sleep(TimeSpan.FromSeconds(1.5));
+                                    });
+                                    output.WriteLine($"Released lock");
+                                }
+                                catch (ThreadInterruptedException) { }
+                            }
+                            t.CancellationToken.ThrowIfCancellationRequested();
+                            output.WriteLine("Stopped sleep");
+                        },
+                        customResources: ImmutableList.Create<CustomResource>(customResourceFile),
+                        customTaskSettings: customTaskSettings));
+
+                task.Start();
+                Thread.Sleep(TimeSpan.FromSeconds(3));
+
+                Assert.Equal(TaskStatus.Canceled, task.Status);
             }
 
             [Fact]
             public void CanCancelTaskWithResourceRelease()
             {
+                GetScheduler(out var maxConcurrentTasks, out var maxCores, out var scheduler);
+
+                CustomTaskTests.GetCustomTaskSettings(out var deadLine, out var maxTaskCores, out var maxRunDuration, out var basePriority, out var customTaskSettings);
+                customTaskSettings = customTaskSettings with
+                {
+                    Deadline = DateTime.Now.AddMinutes(1),
+                    MaxRunDuration = TimeSpan.FromMinutes(1),
+                };
+
+                var customResourceFile = new CustomResourceFile(testFile);
+
+                var task = scheduler.PrepareTask(
+                    new MockCustomTask(
+                        (s, t) =>
+                        {
+                            output.WriteLine("Started run.");
+                            int i = 0;
+                            while (!t.CancellationToken.IsCancellationRequested && i < 2)
+                            {
+                                t.CancellationToken.ThrowIfCancellationRequested();
+                                output.WriteLine($"Iteration {i++}");
+                                try
+                                {
+                                    output.WriteLine($"Waiting for lock");
+                                    scheduler.LockResourceAndAct(customResourceFile, () =>
+                                    {
+                                        output.WriteLine($"Obtained lock");
+                                        using var fs = File.OpenRead(customResourceFile.Uri);
+                                        using var reader = new StreamReader(fs);
+                                        output.WriteLine(reader.ReadToEnd());
+                                        Thread.Sleep(TimeSpan.FromSeconds(4));
+                                    });
+                                    output.WriteLine($"Released lock");
+                                }
+                                catch (ThreadInterruptedException) { }
+                            }
+                            t.CancellationToken.ThrowIfCancellationRequested();
+                            output.WriteLine("Stopped sleep");
+                        },
+                        customResources: ImmutableList.Create<CustomResource>(customResourceFile),
+                        customTaskSettings: customTaskSettings));
+
+                task.Start();
+                Thread.Sleep(TimeSpan.FromSeconds(1));
+                task.Stop();
+                Thread.Sleep(TimeSpan.FromMilliseconds(40000));
+
+                Assert.Equal(TaskStatus.Canceled, task.Status);
+            }
+
+            [Fact]
+            public void CanPriorityInversion()
+            {
+
+
                 throw new NotImplementedException();
             }
 
             [Fact]
-            public void CanDeadlockSameResource()
+            public void CanPermaLockResource()
             {
-                throw new NotImplementedException();
+                GetScheduler(out var maxConcurrentTasks, out var maxCores, out var scheduler);
+
+                CustomTaskTests.GetCustomTaskSettings(out var deadLine, out var maxTaskCores, out var maxRunDuration, out var basePriority, out var customTaskSettings);
+
+                customTaskSettings = customTaskSettings with
+                {
+                    Deadline = DateTime.Today.AddDays(1),
+                    MaxRunDuration = TimeSpan.FromDays(1),
+                };
+
+                var customResourceFile = new CustomResourceFile(testFile1);
+
+                var taskIndex = 1;
+                var timeout = Timeout.InfiniteTimeSpan;
+                var acquired = false;
+                var acquired1 = false;
+
+                var task = scheduler.PrepareTask(
+                    new MockCustomTask(
+                        (s, t) =>
+                        {
+                            int ti = taskIndex++;
+                            output.WriteLine($"[{ti}] Started run.");
+                            int i = 0;
+                            while (!t.CancellationToken.IsCancellationRequested && i < 1)
+                            {
+                                t.CancellationToken.ThrowIfCancellationRequested();
+                                output.WriteLine($"[{ti}] Iteration {i++}");
+                                try
+                                {
+                                    output.WriteLine($"[{ti}] Waiting for lock");
+                                    scheduler.LockResourceAndAct(customResourceFile, () =>
+                                    {
+                                        acquired = true;
+                                        output.WriteLine($"[{ti}] Obtained lock");
+                                        using var fs = File.OpenRead(customResourceFile.Uri);
+                                        using var reader = new StreamReader(fs);
+                                        output.WriteLine(reader.ReadToEnd());
+                                        Thread.Sleep(timeout);
+                                    });
+                                    output.WriteLine($"[{ti}] Released lock");
+                                }
+                                catch (ThreadInterruptedException) { }
+                            }
+                            t.CancellationToken.ThrowIfCancellationRequested();
+                            output.WriteLine($"[{ti}] Stopped sleep");
+                        },
+                        customResources: ImmutableList.Create<CustomResource>(customResourceFile),
+                        customTaskSettings: customTaskSettings));
+
+                var timeout1 = TimeSpan.FromMilliseconds(200);
+                var task1 = scheduler.PrepareTask(
+                    new MockCustomTask(
+                        (s, t) =>
+                        {
+                            int ti = taskIndex++;
+                            TimeSpan sleepTime = timeout;
+
+                            output.WriteLine($"[{ti}] Started run.");
+                            int i = 0;
+                            while (!t.CancellationToken.IsCancellationRequested && i < 1)
+                            {
+                                t.CancellationToken.ThrowIfCancellationRequested();
+                                output.WriteLine($"[{ti}] Iteration {i++}");
+                                try
+                                {
+                                    output.WriteLine($"[{ti}] Waiting for lock");
+                                    scheduler.LockResourceAndAct(customResourceFile, () =>
+                                    {
+                                        acquired1 = true;
+                                        output.WriteLine($"[{ti}] Obtained lock");
+                                        using var fs = File.OpenRead(customResourceFile.Uri);
+                                        using var reader = new StreamReader(fs);
+                                        output.WriteLine(reader.ReadToEnd());
+                                        Thread.Sleep(timeout1);
+                                    });
+                                    output.WriteLine($"[{ti}] Released lock");
+                                }
+                                catch (ThreadInterruptedException) { }
+                            }
+                            t.CancellationToken.ThrowIfCancellationRequested();
+                            output.WriteLine($"[{ti}] Stopped sleep");
+                        },
+                        customResources: ImmutableList.Create<CustomResource>(customResourceFile),
+                        customTaskSettings: customTaskSettings));
+
+                task.Start();
+                Thread.Sleep(TimeSpan.FromMilliseconds(300));
+                Assert.True(acquired);
+                Assert.Equal(TaskStatus.Running, task.Status);
+
+                task1.Start();
+                Thread.Sleep(TimeSpan.FromMilliseconds(400));
+                Assert.False(acquired1);
+                Assert.Equal(TaskStatus.Running, task1.Status);
             }
         }
 

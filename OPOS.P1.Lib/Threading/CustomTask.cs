@@ -96,6 +96,8 @@ namespace OPOS.P1.Lib.Threading
 
         internal ICustomTaskState State { get; set; }
 
+        public AggregateException Exception { get; internal set; }
+
         internal ImmutableList<CustomResource> CustomResources { get; set; }
 
         public CustomTask(
