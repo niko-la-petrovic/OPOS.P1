@@ -1246,16 +1246,24 @@ namespace OPOS.P1.Lib.Test
                                 output.WriteLine($"Iteration {i++}");
                                 try
                                 {
-                                    output.WriteLine($"Waiting for lock");
-                                    scheduler.LockResourceAndAct(customResourceFile, () =>
+                                    for (int j = 0; j < 3; j++)
                                     {
-                                        output.WriteLine($"Obtained lock");
-                                        using var fs = File.OpenRead(customResourceFile.Uri);
-                                        using var reader = new StreamReader(fs);
-                                        output.WriteLine(reader.ReadToEnd());
-                                        Thread.Sleep(TimeSpan.FromSeconds(1.5));
-                                    });
-                                    output.WriteLine($"Released lock");
+                                        output.WriteLine($"Waiting for lock");
+                                        scheduler.LockResourceAndAct(customResourceFile, () =>
+                                        {
+                                            if (t.CancellationToken.IsCancellationRequested)
+                                            {
+                                                output.WriteLine($"Cancellation requested");
+                                                t.CancellationToken.ThrowIfCancellationRequested();
+                                            }
+                                            output.WriteLine($"Obtained lock");
+                                            using var fs = File.OpenRead(customResourceFile.Uri);
+                                            using var reader = new StreamReader(fs);
+                                            output.WriteLine(reader.ReadToEnd());
+                                            Thread.Sleep(TimeSpan.FromSeconds(1.5));
+                                        });
+                                        output.WriteLine($"Released lock");
+                                    }
                                 }
                                 catch (ThreadInterruptedException) { }
                             }
@@ -1297,15 +1305,23 @@ namespace OPOS.P1.Lib.Test
                                 output.WriteLine($"Iteration {i++}");
                                 try
                                 {
-                                    output.WriteLine($"Waiting for lock");
-                                    scheduler.LockResourceAndAct(customResourceFile, () =>
+                                    for (int j = 0; j < 3; j++)
                                     {
-                                        output.WriteLine($"Obtained lock");
-                                        using var fs = File.OpenRead(customResourceFile.Uri);
-                                        using var reader = new StreamReader(fs);
-                                        output.WriteLine(reader.ReadToEnd());
-                                        Thread.Sleep(TimeSpan.FromSeconds(4));
-                                    });
+                                        output.WriteLine($"Waiting for lock");
+                                        scheduler.LockResourceAndAct(customResourceFile, () =>
+                                            {
+                                                if (t.CancellationToken.IsCancellationRequested)
+                                                {
+                                                    output.WriteLine($"Cancellation requested");
+                                                    t.CancellationToken.ThrowIfCancellationRequested();
+                                                }
+                                                output.WriteLine($"Obtained lock");
+                                                using var fs = File.OpenRead(customResourceFile.Uri);
+                                                using var reader = new StreamReader(fs);
+                                                output.WriteLine(reader.ReadToEnd());
+                                                Thread.Sleep(TimeSpan.FromSeconds(1.5));
+                                            });
+                                    }
                                     output.WriteLine($"Released lock");
                                 }
                                 catch (ThreadInterruptedException) { }
@@ -1318,18 +1334,170 @@ namespace OPOS.P1.Lib.Test
 
                 task.Start();
                 Thread.Sleep(TimeSpan.FromSeconds(1));
+                Assert.Equal(TaskStatus.Running, task.Status);
+
                 task.Stop();
-                Thread.Sleep(TimeSpan.FromMilliseconds(40000));
+                Thread.Sleep(TimeSpan.FromMilliseconds(600));
 
                 Assert.Equal(TaskStatus.Canceled, task.Status);
             }
 
-            [Fact]
-            public void CanPriorityInversion()
+            private class MockTaskResourceState : ICustomTaskState
             {
+                public int TaskIndex { get; init; }
+                public int TaskPriority { get; set; }
+                public bool HoldingLock { get; set; }
 
+                public override string ToString()
+                {
+                    return $"{nameof(TaskIndex)} = {TaskIndex}, {nameof(TaskPriority)} = {TaskPriority}, {nameof(HoldingLock)} = {HoldingLock}";
+                }
+            }
 
-                throw new NotImplementedException();
+            [Fact]
+            public void CanPriorityInvert()
+            {
+                GetScheduler(out var maxConcurrentTasks, out var maxCores, out var scheduler);
+
+                CustomTaskTests.GetCustomTaskSettings(out var deadLine, out var maxTaskCores, out var maxRunDuration, out var basePriority, out var customTaskSettings);
+
+                customTaskSettings = customTaskSettings with
+                {
+                    Deadline = DateTime.Now.AddMinutes(2),
+                    MaxRunDuration = TimeSpan.FromMinutes(2),
+                };
+
+                var customResourceFile = new CustomResourceFile(testFile);
+                var customResourceFile1 = new CustomResourceFile(testFile1);
+                var customResourceFile2 = new CustomResourceFile(testFile2);
+                var customResourceFile3 = new CustomResourceFile(testFile3);
+
+                ImmutableList<CustomResource> customResources = ImmutableList.Create<CustomResource>(
+                    customResourceFile,
+                    customResourceFile1,
+                    customResourceFile2);
+
+                var timeout = TimeSpan.FromMilliseconds(200);
+
+                int taskIndex = 1;
+
+                var taskL = scheduler.PrepareTask(
+                    new MockCustomTask(
+                        taskAction(scheduler, customResources, timeout, taskIndex),
+                        state: new MockTaskResourceState { TaskIndex = taskIndex++, TaskPriority = basePriority },
+                        customResources: customResources,
+                        customTaskSettings: customTaskSettings with { Priority = basePriority }));
+
+                var taskM = scheduler.PrepareTask(
+                    new MockCustomTask(
+                        taskAction(scheduler, customResources, timeout, taskIndex),
+                        state: new MockTaskResourceState { TaskIndex = taskIndex++, TaskPriority = basePriority + 1 },
+                        customResources: customResources,
+                        customTaskSettings: customTaskSettings with { Priority = basePriority + 1 }));
+
+                var taskH = scheduler.PrepareTask(
+                    new MockCustomTask(
+                        taskAction(scheduler, customResources, timeout, taskIndex),
+                        state: new MockTaskResourceState { TaskIndex = taskIndex++, TaskPriority = basePriority + 2 },
+                        customResources: customResources,
+                        customTaskSettings: customTaskSettings with { Priority = basePriority + 2 }));
+
+                var stateL = taskL.State as MockTaskResourceState;
+                var stateM = taskM.State as MockTaskResourceState;
+                var stateH = taskH.State as MockTaskResourceState;
+
+                taskL.Start();
+                Thread.Sleep(TimeSpan.FromMilliseconds(100));
+                taskM.Start();
+                Thread.Sleep(TimeSpan.FromMilliseconds(40));
+                taskH.Start();
+
+                // L iteration 0
+                Assert.True(stateL.HoldingLock);
+                Assert.False(stateM.HoldingLock);
+                Assert.False(stateH.HoldingLock);
+
+                output.WriteLine("--");
+                Thread.Sleep(TimeSpan.FromMilliseconds(100));
+
+                // H iteration 0
+                Assert.False(stateL.HoldingLock);
+                Assert.False(stateM.HoldingLock);
+                Assert.True(stateH.HoldingLock);
+
+                Thread.Sleep(timeout);
+                output.WriteLine("--");
+                // M iteration 0
+                Assert.False(stateL.HoldingLock);
+                Assert.True(stateM.HoldingLock);
+                Assert.False(stateH.HoldingLock);
+
+                Thread.Sleep(timeout);
+                output.WriteLine("--");
+                // H iteration 1
+                Assert.False(stateL.HoldingLock);
+                Assert.False(stateM.HoldingLock);
+                Assert.True(stateH.HoldingLock);
+
+                Thread.Sleep(timeout);
+                output.WriteLine("--");
+                // M iteration 1
+                Assert.False(stateL.HoldingLock);
+                Assert.True(stateM.HoldingLock);
+                Assert.False(stateH.HoldingLock);
+
+                Thread.Sleep(timeout);
+                output.WriteLine("--");
+                //Thread.Sleep(TimeSpan.FromMilliseconds(40));
+                // L iteration 1
+                Assert.True(stateL.HoldingLock);
+                Assert.False(stateM.HoldingLock);
+                Assert.False(stateH.HoldingLock);
+
+                Thread.Sleep(6000);
+
+                Action<ICustomTaskState, CustomCancellationToken> taskAction(
+                    CustomScheduler scheduler,
+                    ImmutableList<CustomResource> customResources,
+                    TimeSpan timeout,
+                    int taskIndex)
+                {
+                    return (s, t) =>
+                    {
+                        var resourceState = s as MockTaskResourceState;
+                        int ti = taskIndex;
+                        //output.WriteLine($"[{ti}] Started run.");
+                        int i = 0;
+                        while (!t.CancellationToken.IsCancellationRequested && i < 2)
+                        {
+                            t.CancellationToken.ThrowIfCancellationRequested();
+                            output.WriteLine($"[{ti}] Iteration {i++}");
+                            try
+                            {
+                                output.WriteLine($"[{ti}] Waiting for lock");
+                                scheduler.LockResourceAndAct(customResourceFile, () =>
+                                {
+                                    resourceState.HoldingLock = true;
+                                    output.WriteLine($"[{ti}] Obtained lock");
+                                    foreach (var item in customResources)
+                                    {
+                                        using var fs = File.OpenRead(item.Uri);
+                                        using var reader = new StreamReader(fs);
+                                        output.WriteLine(reader.ReadToEnd());
+                                    }
+
+                                    Thread.Sleep(timeout);
+                                    output.WriteLine($"[{ti}] Releasing lock");
+                                });
+                                resourceState.HoldingLock = false;
+                            }
+                            catch (ThreadInterruptedException) { output.WriteLine($"[{ti}] Thread interrupted."); }
+                        }
+                        t.CancellationToken.ThrowIfCancellationRequested();
+                        output.WriteLine($"[{ti}] i: {i}");
+                        output.WriteLine($"[{ti}] Stopped sleep");
+                    };
+                }
             }
 
             [Fact]
