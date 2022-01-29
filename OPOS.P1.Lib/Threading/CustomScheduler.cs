@@ -13,6 +13,7 @@ namespace OPOS.P1.Lib.Threading
     {
         private const int lockTimeoutMillis = 1;
         private bool disposed;
+        public int ActiveTasks { get; private set; }
         private readonly ThreadLocal<CustomTask> currentTask = new();
 
         private readonly List<Thread> threads;
@@ -193,9 +194,9 @@ namespace OPOS.P1.Lib.Threading
             var taskPriorityTuple = (task, task.Settings.Priority);
 
             // TODO do the same thing if paused or think of alternative approach or leave as is?
-            bool acquired = false;
-            bool acquiredResourceLock = false;
-            while (!acquired)
+            bool isLockedResource = false;
+            bool areLockedResources = false;
+            while (!isLockedResource)
             {
                 try
                 {
@@ -203,42 +204,53 @@ namespace OPOS.P1.Lib.Threading
                     {
                         priorityQueue = resourceTasks.GetOrAdd(customResource, newQueue);
 
-                        lock (priorityQueue)
+                        bool priorityQueueLocked = false;
+                        try
                         {
+                            priorityQueueLocked = Monitor.TryEnter(priorityQueue, lockTimeoutMillis);
+
+                            if (!priorityQueueLocked)
+                                continue;
+
                             if (!priorityQueue.UnorderedItems.Contains(taskPriorityTuple))
                                 priorityQueue.Enqueue(task, task.Settings.Priority);
                         }
-
-                        //lock (priorityQueue)
-                        //{
-                        //    if (!priorityQueue.Peek().Equals(task))
-                        //        continue;
-                        //}
-
-                        acquiredResourceLock = Monitor.TryEnter(customResources, TimeSpan.FromMilliseconds(lockTimeoutMillis));
-
-                        if (!acquiredResourceLock)
-                            continue;
-
-                        acquired = Monitor.TryEnter(customResource, TimeSpan.FromMilliseconds(lockTimeoutMillis));
-
-                        if (!acquired)
-                            continue;
-
-                        lock (priorityQueue)
+                        finally
                         {
+                            if (priorityQueueLocked)
+                                Monitor.Exit(priorityQueue);
+                        }
+
+                        areLockedResources = Monitor.TryEnter(customResources, TimeSpan.FromMilliseconds(lockTimeoutMillis));
+
+                        if (!areLockedResources)
+                            continue;
+
+                        isLockedResource = Monitor.TryEnter(customResource, TimeSpan.FromMilliseconds(lockTimeoutMillis));
+
+                        if (!isLockedResource)
+                            continue;
+
+                        try
+                        {
+                            priorityQueueLocked = Monitor.TryEnter(priorityQueue, lockTimeoutMillis);
+
+                            if (!priorityQueueLocked)
+                                continue;
+
                             if (!priorityQueue.Peek().Equals(task))
                                 continue;
                             priorityQueue.Dequeue();
-
-                            // TODO enqueue it back in if PCP needed 
-                            //priorityQueue.Enqueue()
-                            // TODO boost priority to ceiling, as proposed by PCP, to the max int value
+                        }
+                        finally
+                        {
+                            if (priorityQueueLocked)
+                                Monitor.Exit(priorityQueue);
                         }
                     }
                     finally
                     {
-                        if (acquiredResourceLock)
+                        if (areLockedResources)
                             Monitor.Exit(customResources);
                     }
 
@@ -246,13 +258,7 @@ namespace OPOS.P1.Lib.Threading
                 }
                 finally
                 {
-                    // TODO remove from queue if PCP needed
-                    //lock (customResources)
-                    //{
-                    //    var currentQueue = priorityQueue.
-                    //}
-
-                    if (acquired)
+                    if (isLockedResource)
                         Monitor.Exit(customResource);
                 }
             }
@@ -308,13 +314,16 @@ namespace OPOS.P1.Lib.Threading
 
                         if (shouldTakeNextTask
                             && taskQueue.Count > 0
+                            && ActiveTasks < Settings.MaxConcurrentTasks
                             && peekTask?.Status == TaskStatus.WaitingForActivation
                             && (peekTask?.WantsToRun ?? false))
                             nextTask = taskQueue.Dequeue();
+                        ActiveTasks++;
                     }
 
                     if (nextTask is null)
                     {
+                        ActiveTasks--;
                         try
                         {
                             threadStates.AddOrUpdate(
@@ -394,6 +403,10 @@ namespace OPOS.P1.Lib.Threading
                     catch (Exception ex)
                     {
                         nextTask.Exception = new AggregateException(ex);
+                    }
+                    finally
+                    {
+                        ActiveTasks--;
                     }
 
                     if (preempted)
