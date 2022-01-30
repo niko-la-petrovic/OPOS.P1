@@ -1544,7 +1544,7 @@ namespace OPOS.P1.Lib.Test
                 Thread.Sleep(TimeSpan.FromMilliseconds(50));
                 taskM.Start();
                 // L ahead of L by 50
-                Thread.Sleep(TimeSpan.FromMilliseconds(50));
+                Thread.Sleep(TimeSpan.FromMilliseconds(20));
                 // L ahead of H by 100
                 // M ahead of H by 50
                 taskH.Start();
@@ -1612,7 +1612,7 @@ namespace OPOS.P1.Lib.Test
 
                                     Thread.Sleep(timeout);
                                     output.WriteLine($"[{ti}] Releasing lock");
-                                });
+                                }/*, output, ti*/);
                                 resourceState.HoldingLock = false;
                             }
                             catch (ThreadInterruptedException) { output.WriteLine($"[{ti}] Thread interrupted"); }

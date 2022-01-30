@@ -5,6 +5,7 @@ using System.Collections.Immutable;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Xunit.Abstractions;
 using static OPOS.P1.Lib.Threading.CustomCancellationToken;
 
 namespace OPOS.P1.Lib.Threading
@@ -118,7 +119,7 @@ namespace OPOS.P1.Lib.Threading
             return existingResource;
         }
 
-        internal void LockResourcesAndAct(ImmutableList<CustomResource> requestedResources, Action action)
+        internal void LockResourcesAndAct(ImmutableList<CustomResource> requestedResources, Action action, ITestOutputHelper output = null, int index = 0)
         {
             if (!requestedResources.Any())
                 throw new ArgumentException($"The {nameof(requestedResources)} cannot be empty.", nameof(requestedResources));
@@ -158,7 +159,11 @@ namespace OPOS.P1.Lib.Threading
                             continue;
 
                         if (!priorityQueue.UnorderedItems.Contains(taskPriorityTuple))
+                        {
                             priorityQueue.Enqueue(task, task.Settings.Priority);
+                            //output?.WriteLine($"[{index}] Added {taskPriority} to [{resource}]");
+                            output?.WriteLine($"[{index}] PQ [{resource}] [{string.Join(", ", priorityQueue.UnorderedItems.ToImmutableSortedSet().Select(t => t.Element))}]");
+                        }
                     }
                     finally
                     {
@@ -176,24 +181,24 @@ namespace OPOS.P1.Lib.Threading
             {
                 try
                 {
-                    while (!acquiredAll)
+                    bool failedOne = false;
+                    while (!acquiredAll && !failedOne)
                     {
+                        acquiredAll = false;
                         try
                         {
                             areLockedResources = Monitor.TryEnter(customResources, TimeSpan.FromMilliseconds(lockTimeoutMillis));
                             if (!areLockedResources)
                                 continue;
 
-                            for (int i = 0; i < existingResources.Count; i++)
+                            for (int i = 0; i < existingResources.Count;)
                             {
                                 var resource = existingResources[i];
 
-                                bool acquired = false;
-                                while (!acquired)
+                                while (!acquiredArr[i])
                                 {
-                                    acquired = Monitor.TryEnter(resource, TimeSpan.FromMilliseconds(lockTimeoutMillis));
-                                    acquiredArr[i] = acquired;
-                                    if (!acquired)
+                                    acquiredArr[i] = Monitor.TryEnter(resource, TimeSpan.FromMilliseconds(lockTimeoutMillis));
+                                    if (!acquiredArr[i])
                                         continue;
                                 }
 
@@ -207,8 +212,15 @@ namespace OPOS.P1.Lib.Threading
                                         continue;
 
                                     if (!priorityQueue.Peek().Equals(task))
-                                        continue;
+                                    {
+                                        failedOne = true;
+                                        break;
+                                    }
+
+                                    output?.WriteLine($"[{index}] First for [{resource}] is {priorityQueue.Peek()}] to [{resource}]");
+
                                     priorityQueue.Dequeue();
+                                    i++;
                                 }
                                 finally
                                 {
@@ -222,8 +234,23 @@ namespace OPOS.P1.Lib.Threading
                             if (areLockedResources)
                                 Monitor.Exit(customResources);
 
-                            if (!areLockedResources)
-                                Thread.Sleep(lockTimeoutMillis);
+                            if (failedOne)
+                            {
+                                for (int i = 0; i < existingResources.Count; i++)
+                                {
+                                    if (acquiredArr[i])
+                                    {
+                                        Monitor.Exit(existingResources[i]);
+                                        acquiredArr[i] = false;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (failedOne)
+                        {
+                            failedOne = false;
+                            continue;
                         }
 
                         acquiredAll = true;
@@ -231,6 +258,7 @@ namespace OPOS.P1.Lib.Threading
 
                     try
                     {
+                        output?.WriteLine($"[{index}] {acquiredAll} {areLockedResources} [{string.Join(", ", acquiredArr)}]");
                         action();
                     }
                     finally
