@@ -5,14 +5,16 @@ using System.Collections.Immutable;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Xunit.Abstractions;
 using static OPOS.P1.Lib.Threading.CustomCancellationToken;
 
 namespace OPOS.P1.Lib.Threading
 {
     public class CustomScheduler : IDisposable
     {
-        private const int lockTimeoutMillis = 10;
+        private const int lockTimeoutMillis = 1;
         private bool disposed;
+        public int ActiveTasks { get; private set; }
         private readonly ThreadLocal<CustomTask> currentTask = new();
 
         private readonly List<Thread> threads;
@@ -32,6 +34,7 @@ namespace OPOS.P1.Lib.Threading
 
         internal readonly ConcurrentDictionary<string, CancellationTokenSource> customResourceTokenSources = new();
 
+        internal readonly ConcurrentDictionary<CustomResource, PriorityQueue<CustomTask, int>> resourceTasks = new();
 
         public record CustomThreadState
         {
@@ -98,8 +101,13 @@ namespace OPOS.P1.Lib.Threading
             customTask.Scheduler = this;
 
             if (customTask.CustomResources is not null)
+            {
                 foreach (var customResource in customTask.CustomResources)
+                {
                     customResources.TryAdd(customResource.Uri, customResource);
+                    resourceTasks.TryAdd(customResource, new PriorityQueue<CustomTask, int>(new IntegerDescendingComparer()));
+                }
+            }
 
             Enqueue(customTask);
             return customTask;
@@ -111,12 +119,7 @@ namespace OPOS.P1.Lib.Threading
             return existingResource;
         }
 
-        internal void LockResourceAndAct(CustomResource customResource, Action action)
-        {
-            LockResourceAndAct(customResource.Uri, action);
-        }
-
-        internal void LockResourcesAndAct(ImmutableList<CustomResource> requestedResources, Action action)
+        internal void LockResourcesAndAct(ImmutableList<CustomResource> requestedResources, Action action, ITestOutputHelper output = null, int index = 0)
         {
             if (!requestedResources.Any())
                 throw new ArgumentException($"The {nameof(requestedResources)} cannot be empty.", nameof(requestedResources));
@@ -132,54 +135,136 @@ namespace OPOS.P1.Lib.Threading
             if (existingResources.Count != requestedResources.Count)
                 throw new ArgumentException($"One of the {nameof(requestedResources)} was not obtained in the current task context {currentTask.Value}", nameof(requestedResources));
 
-            var source = taskCancellationTokenSources.GetValueOrDefault(currentTask.Value);
+            var task = currentTask.Value;
+            var taskPriority = task.Settings.Priority;
+            var taskPriorityTuple = (task, task.Settings.Priority);
 
-            var pauseTokenSource = source.PauseTokenSource;
-            var cancellationTokenSource = source.PauseTokenSource;
+            var priorityQueues = new PriorityQueue<CustomTask, int>[existingResources.Count];
 
-            var pauseToken = pauseTokenSource.Token;
-            var cancellationToken = cancellationTokenSource.Token;
-
-            using (cancellationToken.Register(() => cancellationToken.ThrowIfCancellationRequested()))
+            for (int i = 0; i < existingResources.Count; i++)
             {
-                bool acquiredAll = false;
-                bool[] acquiredArr = new bool[existingResources.Count];
-                bool acquiredResourceLock = false;
+                var resource = existingResources[i];
+                bool priorityQueueLocked = false;
 
+                while (!priorityQueueLocked)
+                {
+                    var priorityQueue = resourceTasks.GetValueOrDefault(resource);
+                    priorityQueues[i] = priorityQueue;
+
+                    try
+                    {
+                        priorityQueueLocked = Monitor.TryEnter(priorityQueue, lockTimeoutMillis);
+
+                        if (!priorityQueueLocked)
+                            continue;
+
+                        if (!priorityQueue.UnorderedItems.Contains(taskPriorityTuple))
+                        {
+                            priorityQueue.Enqueue(task, task.Settings.Priority);
+                            //output?.WriteLine($"[{index}] Added {taskPriority} to [{resource}]");
+                            output?.WriteLine($"[{index}] PQ [{resource}] [{string.Join(", ", priorityQueue.UnorderedItems.ToImmutableSortedSet().Select(t => t.Element))}]");
+                        }
+                    }
+                    finally
+                    {
+                        if (priorityQueueLocked)
+                            Monitor.Exit(priorityQueue);
+                    }
+                }
+            }
+
+            bool acquiredAll = false;
+            bool[] acquiredArr = new bool[existingResources.Count];
+            bool areLockedResources = false;
+            bool triedExecutingAction = false;
+            while (!triedExecutingAction)
+            {
                 try
                 {
-                    while (!acquiredAll)
+                    bool failedOne = false;
+                    while (!acquiredAll && !failedOne)
                     {
+                        acquiredAll = false;
                         try
                         {
-                            acquiredResourceLock = Monitor.TryEnter(customResources, TimeSpan.FromMilliseconds(lockTimeoutMillis));
-                            if (!acquiredResourceLock)
+                            areLockedResources = Monitor.TryEnter(customResources, TimeSpan.FromMilliseconds(lockTimeoutMillis));
+                            if (!areLockedResources)
                                 continue;
 
-                            for (int i = 0; i < existingResources.Count; i++)
+                            for (int i = 0; i < existingResources.Count;)
                             {
                                 var resource = existingResources[i];
-                                bool acquired = false;
-                                while (!acquired)
+
+                                while (!acquiredArr[i])
                                 {
-                                    acquired = Monitor.TryEnter(resource, TimeSpan.FromMilliseconds(lockTimeoutMillis));
-                                    acquiredArr[i] = acquired;
-                                    //if (!acquired)
-                                    //{
-                                    //}
+                                    acquiredArr[i] = Monitor.TryEnter(resource, TimeSpan.FromMilliseconds(lockTimeoutMillis));
+                                    if (!acquiredArr[i])
+                                        continue;
+                                }
+
+                                var priorityQueueLocked = false;
+                                var priorityQueue = priorityQueues[i];
+                                try
+                                {
+                                    priorityQueueLocked = Monitor.TryEnter(priorityQueue, lockTimeoutMillis);
+
+                                    if (!priorityQueueLocked)
+                                        continue;
+
+                                    if (!priorityQueue.Peek().Equals(task))
+                                    {
+                                        failedOne = true;
+                                        break;
+                                    }
+
+                                    output?.WriteLine($"[{index}] First for [{resource}] is {priorityQueue.Peek()}] to [{resource}]");
+
+                                    priorityQueue.Dequeue();
+                                    i++;
+                                }
+                                finally
+                                {
+                                    if (priorityQueueLocked)
+                                        Monitor.Exit(priorityQueue);
                                 }
                             }
                         }
                         finally
                         {
-                            if (acquiredResourceLock)
+                            if (areLockedResources)
                                 Monitor.Exit(customResources);
+
+                            if (failedOne)
+                            {
+                                for (int i = 0; i < existingResources.Count; i++)
+                                {
+                                    if (acquiredArr[i])
+                                    {
+                                        Monitor.Exit(existingResources[i]);
+                                        acquiredArr[i] = false;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (failedOne)
+                        {
+                            failedOne = false;
+                            continue;
                         }
 
                         acquiredAll = true;
                     }
 
-                    action();
+                    try
+                    {
+                        output?.WriteLine($"[{index}] {acquiredAll} {areLockedResources} [{string.Join(", ", acquiredArr)}]");
+                        action();
+                    }
+                    finally
+                    {
+                        triedExecutingAction = true;
+                    }
                 }
                 finally
                 {
@@ -192,54 +277,102 @@ namespace OPOS.P1.Lib.Threading
             }
         }
 
+        internal void LockResourceAndAct(CustomResource customResource, Action action)
+        {
+            LockResourceAndAct(customResource.Uri, action);
+        }
+
         internal void LockResourceAndAct(string uri, Action action)
         {
             customResources.TryGetValue(uri, out var customResource);
             if (!(currentTask.Value?.CustomResources?.Contains(customResource) ?? false))
                 throw new ArgumentException($"Resource {uri} is not owned by current task context '{currentTask.Value}'.", nameof(uri));
 
-            var source = taskCancellationTokenSources.GetValueOrDefault(currentTask.Value);
-            var pauseTokenSource = source.PauseTokenSource;
-            var cancellationTokenSource = source.PauseTokenSource;
+            var newQueue = new PriorityQueue<CustomTask, int>(new IntegerDescendingComparer());
+            PriorityQueue<CustomTask, int> priorityQueue = null;
 
-            var pauseToken = pauseTokenSource.Token;
-            var cancellationToken = cancellationTokenSource.Token;
+            var task = currentTask.Value;
+            var taskPriority = task.Settings.Priority;
+            var taskPriorityTuple = (task, task.Settings.Priority);
+            priorityQueue = resourceTasks.GetValueOrDefault(customResource);
 
-            // TODO catch exception being thrown?
-            using (cancellationToken.Register(() => cancellationToken.ThrowIfCancellationRequested()))
+            bool priorityQueueLocked = false;
+            while (!priorityQueueLocked)
             {
-                // TODO do the same thing if paused?
-                bool acquired = false;
-                bool acquiredResourceLock = false;
-                while (!acquired)
+                try
+                {
+                    priorityQueueLocked = Monitor.TryEnter(priorityQueue, lockTimeoutMillis);
+
+                    if (!priorityQueueLocked)
+                        continue;
+
+                    if (!priorityQueue.UnorderedItems.Contains(taskPriorityTuple))
+                        priorityQueue.Enqueue(task, task.Settings.Priority);
+                }
+                finally
+                {
+                    if (priorityQueueLocked)
+                        Monitor.Exit(priorityQueue);
+                }
+            }
+
+            // TODO do the same thing if paused or think of alternative approach or leave as is?
+            bool isLockedResource = false;
+            bool areLockedResources = false;
+            bool triedExecutingAction = false;
+            while (!triedExecutingAction)
+            {
+                try
                 {
                     try
                     {
+                        areLockedResources = Monitor.TryEnter(customResources, TimeSpan.FromMilliseconds(lockTimeoutMillis));
+
+                        if (!areLockedResources)
+                            continue;
+
+                        isLockedResource = Monitor.TryEnter(customResource, TimeSpan.FromMilliseconds(lockTimeoutMillis));
+
+                        if (!isLockedResource)
+                            continue;
+
                         try
                         {
-                            acquiredResourceLock = Monitor.TryEnter(customResources, TimeSpan.FromMilliseconds(lockTimeoutMillis));
+                            priorityQueueLocked = Monitor.TryEnter(priorityQueue, lockTimeoutMillis);
 
-                            if (!acquiredResourceLock)
+                            if (!priorityQueueLocked)
                                 continue;
 
-                            acquired = Monitor.TryEnter(customResource, TimeSpan.FromMilliseconds(lockTimeoutMillis));
-
-                            if (!acquired)
+                            if (!priorityQueue.Peek().Equals(task))
                                 continue;
+
+                            priorityQueue.Dequeue();
                         }
                         finally
                         {
-                            if (acquiredResourceLock)
-                                Monitor.Exit(customResources);
+                            if (priorityQueueLocked)
+                                Monitor.Exit(priorityQueue);
                         }
+                    }
+                    finally
+                    {
+                        if (areLockedResources)
+                            Monitor.Exit(customResources);
+                    }
 
+                    try
+                    {
                         action();
                     }
                     finally
                     {
-                        if (acquired)
-                            Monitor.Exit(customResource);
+                        triedExecutingAction = true;
                     }
+                }
+                finally
+                {
+                    if (isLockedResource)
+                        Monitor.Exit(customResource);
                 }
             }
         }
@@ -294,13 +427,16 @@ namespace OPOS.P1.Lib.Threading
 
                         if (shouldTakeNextTask
                             && taskQueue.Count > 0
+                            && ActiveTasks < Settings.MaxConcurrentTasks
                             && peekTask?.Status == TaskStatus.WaitingForActivation
                             && (peekTask?.WantsToRun ?? false))
                             nextTask = taskQueue.Dequeue();
+                        ActiveTasks++;
                     }
 
                     if (nextTask is null)
                     {
+                        ActiveTasks--;
                         try
                         {
                             threadStates.AddOrUpdate(
@@ -380,6 +516,10 @@ namespace OPOS.P1.Lib.Threading
                     catch (Exception ex)
                     {
                         nextTask.Exception = new AggregateException(ex);
+                    }
+                    finally
+                    {
+                        ActiveTasks--;
                     }
 
                     if (preempted)
