@@ -57,6 +57,9 @@ namespace OPOS.P1.Lib.Threading
                 (TaskStatus.RanToCompletion, _) => -1,
                 (_, TaskStatus.RanToCompletion) => 1,
 
+                (TaskStatus.Faulted, _) => -1,
+                (_, TaskStatus.Faulted) => 1,
+
                 (TaskStatus.Canceled, _) => -1,
                 (_, TaskStatus.Canceled) => 1,
 

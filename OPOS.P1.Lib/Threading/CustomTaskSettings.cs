@@ -8,7 +8,7 @@ namespace OPOS.P1.Lib.Threading
 
         public DateTime Deadline { get; init; } = DateTime.Now.AddSeconds(5);
 
-        // TODO try to respect this
+        // TODO respect this
         public int MaxCores { get; init; }
 
         public int Priority { get; init; }

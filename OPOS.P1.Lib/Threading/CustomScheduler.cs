@@ -614,8 +614,14 @@ namespace OPOS.P1.Lib.Threading
                 taskQueue.Enqueue(customTask, customTask);
 
                 threadTasks.TryGetValue(customTask, out var thread);
-                if (thread is not null)
+                if (thread is not null && !threadStates.GetValueOrDefault(thread).WakingUp)
+                {
+                    threadStates.AddOrUpdate(thread,
+                    new CustomThreadState { WakingUp = true },
+                    (t, ts) => new CustomThreadState { WakingUp = true });
                     thread.Interrupt();
+                    return;
+                }
 
                 // TODO or if the priority of the currently enqueued task is not higher than that of the other currently running ones
 
