@@ -1,32 +1,21 @@
-﻿using OPOS.P1.Fs.Lib;
+﻿using DokanNet;
+using Microsoft.VisualBasic.Devices;
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
-using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using Microsoft.VisualBasic.Devices;
-using DokanNet;
-using System.IO;
-using System.Threading;
-using System.Runtime.InteropServices;
+using LibFileSystem = OPOS.P1.Lib.FileSystem;
 
-namespace OPOS.P1.WinForms
+namespace OPOS.P1.WinForms.Utility
 {
-    public partial class Form1 : Form
+    public class FileSystem
     {
-        private const int dokanThreadCount = 1;
-
-        [DllImport("kernel32.dll")]
-        private static extern bool AllocConsole();
-
-        public Form1()
+        public static void ConfigureInMemoryFileSystem(int dokanThreadCount)
         {
-            AllocConsole();
-
             var computerInfo = new ComputerInfo();
 
             Func<long> getTotalMemory = () =>
@@ -37,7 +26,7 @@ namespace OPOS.P1.WinForms
             {
                 return (long)computerInfo.AvailablePhysicalMemory - Environment.WorkingSet;
             };
-            var fileSystem = new FileSystem(
+            var fileSystem = new LibFileSystem.FileSystem(
                 getTotalMemory: getTotalMemory,
                 getFreeMemory: getFreeMemory
                 );
@@ -68,12 +57,11 @@ namespace OPOS.P1.WinForms
             System.IO.Directory.CreateDirectory(inputFolder);
             System.IO.Directory.CreateDirectory(outputFolder);
 
-            System.IO.File.Copy(@"G:\downloads\output1.txt", @"B:\input\output1.txt");
-            System.IO.File.Copy(@"G:\downloads\f5982351-8fe4-4a9f-b371-b0a0bee55823-results.txt", @"b:\input\f5982351-8fe4-4a9f-b371-b0a0bee55823-results.txt", true);
+            Thread.Sleep(200);
 
-            InitializeComponent();
-
+            // TODO remove
+            //System.IO.File.Copy(@"G:\downloads\kellen-riggin-U-Xa6K3Rfxk-unsplash.jpg", @"B:\output\inputkellen-riggin-U-Xa6K3Rfxk-unsplash.jpg");
+            //System.IO.File.Copy(@"G:\downloads\kellen-riggin-U-Xa6K3Rfxk-unsplash1.jpg", @"B:\output\inputkellen-riggin-U-Xa6K3Rfxk-unsplash1.jpg");
         }
-
     }
 }

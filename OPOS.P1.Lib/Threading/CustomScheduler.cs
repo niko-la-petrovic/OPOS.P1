@@ -36,6 +36,22 @@ namespace OPOS.P1.Lib.Threading
 
         internal readonly ConcurrentDictionary<CustomResource, PriorityQueue<CustomTask, int>> resourceTasks = new();
 
+        public event EventHandler<TaskStatusEventArgs> TaskStatusChanged;
+        public event EventHandler<TaskProgressEventArgs> TaskProgressChanged;
+
+        public class TaskProgressEventArgs
+        {
+            public float Progress { get; set; }
+            public CustomTask Task { get; set; }
+        }
+
+        public class TaskStatusEventArgs
+        {
+            public TaskStatus Status { get; set; }
+            public CustomTask Task { get; set; }
+            public bool WantsToRun { get; set; }
+        }
+
         public record CustomThreadState
         {
             public bool WakingUp { get; init; }
@@ -462,6 +478,7 @@ namespace OPOS.P1.Lib.Threading
                     currentTask.Value = nextTask;
 
                     nextTask.Status = TaskStatus.Running;
+                    OnTaskStatusChanged(new TaskStatusEventArgs { Task = nextTask, Status = nextTask.Status, WantsToRun = nextTask.WantsToRun });
                     bool ranNoExceptions = false;
                     bool preempted = false;
                     try
@@ -488,10 +505,12 @@ namespace OPOS.P1.Lib.Threading
                         {
                             nextTask.MetDeadline = reachedDeadline;
                             nextTask.Status = TaskStatus.Canceled;
+                            nextTask.WantsToRun = false;
                             // TODO replace with method that also disposes both the cancellationton sources
                             taskCancellationTokenSources.Remove(nextTask, out _);
                             currentTask.Value = null;
                             threadTasks.Remove(nextTask, out _);
+                            OnTaskStatusChanged(new TaskStatusEventArgs { Task = nextTask, Status = nextTask.Status, WantsToRun = nextTask.WantsToRun });
                             continue;
                         }
 
@@ -503,6 +522,7 @@ namespace OPOS.P1.Lib.Threading
                         {
                             nextTask.Status = TaskStatus.Created;
                             Enqueue(nextTask);
+                            OnTaskStatusChanged(new TaskStatusEventArgs { Task = nextTask, Status = nextTask.Status, WantsToRun = nextTask.WantsToRun });
                             continue;
                         }
 
@@ -511,6 +531,7 @@ namespace OPOS.P1.Lib.Threading
                         taskCancellationTokenSources.Remove(nextTask, out _);
                         currentTask.Value = null;
                         threadTasks.Remove(nextTask, out _);
+                        OnTaskStatusChanged(new TaskStatusEventArgs { Task = nextTask, Status = nextTask.Status, WantsToRun = nextTask.WantsToRun });
                         continue;
                     }
                     catch (Exception ex)
@@ -528,18 +549,22 @@ namespace OPOS.P1.Lib.Threading
                         lock (_taskQueueLock)
                             taskQueue.Enqueue(nextTask, nextTask);
 
+                        OnTaskStatusChanged(new TaskStatusEventArgs { Task = nextTask, Status = nextTask.Status, WantsToRun = nextTask.WantsToRun });
                         continue;
                     }
 
                     if (!ranNoExceptions)
                     {
                         nextTask.Status = TaskStatus.Faulted;
+                        nextTask.WantsToRun = false;
                         currentTask.Value = null;
+                        OnTaskStatusChanged(new TaskStatusEventArgs { Task = nextTask, Status = nextTask.Status, WantsToRun = nextTask.WantsToRun });
                         continue;
                     }
 
                     nextTask.Status = TaskStatus.RanToCompletion;
                     currentTask.Value = null;
+                    OnTaskStatusChanged(new TaskStatusEventArgs { Task = nextTask, Status = nextTask.Status, WantsToRun = nextTask.WantsToRun });
                 }
                 // TODO handle interrupt
                 catch (ThreadInterruptedException) { }
@@ -600,6 +625,7 @@ namespace OPOS.P1.Lib.Threading
                 customTask.WantsToRun = false;
                 taskCancellationTokenSources.TryGetValue(customTask, out var cancellationTokenSource);
                 cancellationTokenSource.CancellationTokenSource.Cancel();
+                OnTaskStatusChanged(new TaskStatusEventArgs { Task = customTask, Status = customTask.Status, WantsToRun = customTask.WantsToRun });
                 return;
             }
 
@@ -612,6 +638,7 @@ namespace OPOS.P1.Lib.Threading
 
                 customTask.Status = taskStatus;
                 taskQueue.Enqueue(customTask, customTask);
+                OnTaskStatusChanged(new TaskStatusEventArgs { Task = customTask, Status = customTask.Status, WantsToRun = customTask.WantsToRun });
 
                 threadTasks.TryGetValue(customTask, out var thread);
                 if (thread is not null && !threadStates.GetValueOrDefault(thread).WakingUp)
@@ -685,6 +712,16 @@ namespace OPOS.P1.Lib.Threading
         //        throw new NotImplementedException();
         //    throw new NotImplementedException();
         //}
+
+        protected virtual void OnTaskStatusChanged(TaskStatusEventArgs e)
+        {
+            TaskStatusChanged?.Invoke(this, e);
+        }
+
+        internal virtual void OnTaskProgressChanged(TaskProgressEventArgs e)
+        {
+            TaskProgressChanged?.Invoke(this, e);
+        }
 
         protected bool TryExecuteTaskInline(Task task, bool taskWasPreviouslyQueued)
         {

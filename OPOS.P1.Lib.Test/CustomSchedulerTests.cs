@@ -32,11 +32,11 @@ namespace OPOS.P1.Lib.Test
         }
     }
 
-    public class SchedulerTests
+    public class CustomSchedulerTests
     {
         private readonly ITestOutputHelper output;
 
-        public SchedulerTests(ITestOutputHelper output)
+        public CustomSchedulerTests(ITestOutputHelper output)
         {
             this.output = output;
         }
@@ -171,7 +171,7 @@ namespace OPOS.P1.Lib.Test
             Assert.True(boolStates.All(s => s));
         }
 
-        public class TaskOperationsTests
+        public class CustomTaskOperationsTests
         {
             private const string testFile = "test.txt";
             private const string testFile1 = "test1.txt";
@@ -180,7 +180,7 @@ namespace OPOS.P1.Lib.Test
 
             private readonly ITestOutputHelper output;
 
-            public TaskOperationsTests(ITestOutputHelper output)
+            public CustomTaskOperationsTests(ITestOutputHelper output)
             {
                 this.output = output;
             }

@@ -1,12 +1,13 @@
 ﻿using DokanNet;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
 
-namespace OPOS.P1.Fs.Lib
+namespace OPOS.P1.Lib.FileSystem
 {
     public abstract class IFsItem
     {
@@ -46,7 +47,7 @@ namespace OPOS.P1.Fs.Lib
         public File File { get; set; }
     }
 
-    public class File : IFsItem
+    public class File : IFsItem, IEquatable<File>
     {
         private static readonly SHA1 sha = SHA1.Create();
 
@@ -87,6 +88,11 @@ namespace OPOS.P1.Fs.Lib
         public override int GetHashCode()
         {
             return HashCode.Combine(Name, Hash, Parent);
+        }
+
+        bool IEquatable<File>.Equals(File other)
+        {
+            return Equals(other);
         }
     }
 
@@ -177,7 +183,7 @@ namespace OPOS.P1.Fs.Lib
         };
 
         // TODO handle case where file is deleted
-        private readonly Dictionary<IFsItem, System.Timers.Timer> fileWriteTimers = new();
+        private readonly ConcurrentDictionary<IFsItem, System.Timers.Timer> fileWriteTimers = new();
 
         //private ConsoleLogger logger = new("[IMFS] ");
 
@@ -597,12 +603,13 @@ namespace OPOS.P1.Fs.Lib
             if (fileWriteTimers.TryGetValue(file, out var timer)){
                 timer.Stop();
                 timer.Dispose();
-                fileWriteTimers.Remove(file);
+                fileWriteTimers.TryRemove(file, out _);
             }
             var newTimer = new System.Timers.Timer();
             newTimer.Interval = TimeSpan.FromSeconds(5).TotalMilliseconds;
             newTimer.Elapsed += (s, e) => OnWriteOccurred(fileOpEvent);
-            fileWriteTimers.Add(file, newTimer);
+            newTimer.AutoReset = false;
+            fileWriteTimers.TryAdd(file, newTimer);
             newTimer.Start();
 
             lock (file.Data)

@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using static OPOS.P1.Lib.Threading.CustomScheduler;
+using Xunit.Abstractions;
 
 [assembly: InternalsVisibleTo("OPOS.P1.Lib.Test")]
 namespace OPOS.P1.Lib.Threading
@@ -81,6 +82,8 @@ namespace OPOS.P1.Lib.Threading
 
     public abstract class CustomTask : ICustomTask, IComparable<CustomTask>, IEquatable<CustomTask>
     {
+        private float progress;
+
         public bool MetDeadline { get; set; }
         public bool WantsToRun { get; set; }
 
@@ -90,7 +93,15 @@ namespace OPOS.P1.Lib.Threading
 
         public CustomTaskSettings Settings { get; init; }
 
-        public float Progress { get; internal set; }
+        public float Progress
+        {
+            get => progress;
+            internal set
+            {
+                progress = value;
+                Scheduler.OnTaskProgressChanged(new TaskProgressEventArgs { Progress = value, Task = this });
+            }
+        }
 
         public new TaskStatus Status { get; internal set; }
 
@@ -158,6 +169,22 @@ namespace OPOS.P1.Lib.Threading
             Scheduler.UpdateTaskStatus(this, TaskStatus.WaitingForActivation);
         }
 
+        protected void LockResourceAndAct(CustomResource customResource, Action action)
+        {
+            Scheduler.LockResourceAndAct(customResource, action);
+        }
+
+        protected void LockResourceAndAct(string uri, Action action)
+        {
+            Scheduler.LockResourceAndAct(uri, action);
+        }
+
+        protected void LockResourcesAndAct(ImmutableList<CustomResource> requestedResources, Action action)
+        {
+            Scheduler.LockResourcesAndAct(requestedResources, action);
+        }
+
+        // TODO rename to Cancel
         public void Stop()
         {
             if (Status != TaskStatus.Running)
@@ -167,9 +194,9 @@ namespace OPOS.P1.Lib.Threading
             Scheduler.UpdateTaskStatus(this, TaskStatus.Canceled);
         }
 
-        public string Serialize<T>() where T : ICustomTaskState
+        public string Serialize<TState>() where TState : ICustomTaskState
         {
-            var json = JsonSerializer.Serialize((T)State);
+            var json = JsonSerializer.Serialize((TState)State);
             return json;
         }
 

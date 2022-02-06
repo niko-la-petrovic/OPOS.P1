@@ -8,6 +8,8 @@ namespace OPOS.P1.Lib.Threading
 
         public DateTime Deadline { get; init; } = DateTime.Now.AddSeconds(5);
 
+        public bool Parallelize { get; init; }
+
         // TODO respect this
         public int MaxCores { get; init; }
 
