@@ -61,7 +61,7 @@ namespace OPOS.P1.Lib.Algo
 
         // TODO provide SIMD implementation as well
 
-        // TODO read from input stream as each task is initialized to get processing earlier
+        // TODO read from input stream as each task is initialized to get to processing earlier
         public unsafe static void FftParallel(double[] signal, int windowSize, double samplingRate, out List<FftResult> fftResults)
         {
             var signalSpan = signal.AsSpan();

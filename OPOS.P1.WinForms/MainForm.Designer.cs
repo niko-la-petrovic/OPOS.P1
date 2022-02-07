@@ -43,6 +43,7 @@ namespace OPOS.P1.WinForms
             this.currentConcurrencyTextBox = new System.Windows.Forms.TextBox();
             this.clearFinishedTasksButton = new System.Windows.Forms.Button();
             this.taskControlsGroupBox = new System.Windows.Forms.GroupBox();
+            this.startUnstartedTasksButton = new System.Windows.Forms.Button();
             this.schedulerControlsGroupBox = new System.Windows.Forms.GroupBox();
             this.currentInfoGroupBox = new System.Windows.Forms.GroupBox();
             this.taskOverviewGroupBox = new System.Windows.Forms.GroupBox();
@@ -57,7 +58,7 @@ namespace OPOS.P1.WinForms
             // 
             // createTaskButton
             // 
-            this.createTaskButton.Location = new System.Drawing.Point(6, 22);
+            this.createTaskButton.Location = new System.Drawing.Point(9, 22);
             this.createTaskButton.Name = "createTaskButton";
             this.createTaskButton.Size = new System.Drawing.Size(75, 23);
             this.createTaskButton.TabIndex = 0;
@@ -167,7 +168,7 @@ namespace OPOS.P1.WinForms
             // 
             // clearFinishedTasksButton
             // 
-            this.clearFinishedTasksButton.Location = new System.Drawing.Point(87, 22);
+            this.clearFinishedTasksButton.Location = new System.Drawing.Point(90, 22);
             this.clearFinishedTasksButton.Name = "clearFinishedTasksButton";
             this.clearFinishedTasksButton.Size = new System.Drawing.Size(125, 23);
             this.clearFinishedTasksButton.TabIndex = 10;
@@ -177,14 +178,25 @@ namespace OPOS.P1.WinForms
             // 
             // taskControlsGroupBox
             // 
+            this.taskControlsGroupBox.Controls.Add(this.startUnstartedTasksButton);
             this.taskControlsGroupBox.Controls.Add(this.createTaskButton);
             this.taskControlsGroupBox.Controls.Add(this.clearFinishedTasksButton);
             this.taskControlsGroupBox.Location = new System.Drawing.Point(12, 83);
             this.taskControlsGroupBox.Name = "taskControlsGroupBox";
-            this.taskControlsGroupBox.Size = new System.Drawing.Size(269, 59);
+            this.taskControlsGroupBox.Size = new System.Drawing.Size(360, 59);
             this.taskControlsGroupBox.TabIndex = 11;
             this.taskControlsGroupBox.TabStop = false;
             this.taskControlsGroupBox.Text = "Task Controls";
+            // 
+            // startUnstartedTasksButton
+            // 
+            this.startUnstartedTasksButton.Location = new System.Drawing.Point(221, 22);
+            this.startUnstartedTasksButton.Name = "startUnstartedTasksButton";
+            this.startUnstartedTasksButton.Size = new System.Drawing.Size(128, 23);
+            this.startUnstartedTasksButton.TabIndex = 11;
+            this.startUnstartedTasksButton.Text = "Start Unstarted Tasks";
+            this.startUnstartedTasksButton.UseVisualStyleBackColor = true;
+            this.startUnstartedTasksButton.Click += new System.EventHandler(this.StartUnstartedTasksButton_Click);
             // 
             // schedulerControlsGroupBox
             // 
@@ -204,7 +216,7 @@ namespace OPOS.P1.WinForms
             this.currentInfoGroupBox.Controls.Add(this.currentConcurrencyTextBox);
             this.currentInfoGroupBox.Location = new System.Drawing.Point(518, 12);
             this.currentInfoGroupBox.Name = "currentInfoGroupBox";
-            this.currentInfoGroupBox.Size = new System.Drawing.Size(258, 65);
+            this.currentInfoGroupBox.Size = new System.Drawing.Size(447, 65);
             this.currentInfoGroupBox.TabIndex = 13;
             this.currentInfoGroupBox.TabStop = false;
             this.currentInfoGroupBox.Text = "Current Info";
@@ -262,6 +274,7 @@ namespace OPOS.P1.WinForms
         private System.Windows.Forms.GroupBox schedulerControlsGroupBox;
         private System.Windows.Forms.GroupBox currentInfoGroupBox;
         private System.Windows.Forms.GroupBox taskOverviewGroupBox;
+        private System.Windows.Forms.Button startUnstartedTasksButton;
     }
 }
 

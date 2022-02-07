@@ -1840,7 +1840,7 @@ namespace OPOS.P1.Lib.Test
             Assert.Throws<ArgumentNullException>(() => { new MockCustomTask(null); });
         }
 
-        public static void GetCustomTaskSettings(
+        internal static void GetCustomTaskSettings(
             out DateTime deadLine,
             out int maxCores,
             out TimeSpan maxRunDuration,
@@ -1856,7 +1856,8 @@ namespace OPOS.P1.Lib.Test
                 Deadline = deadLine,
                 MaxCores = maxCores,
                 MaxRunDuration = maxRunDuration,
-                Priority = priority
+                Priority = priority,
+                Parallelize = true,
             };
         }
     }

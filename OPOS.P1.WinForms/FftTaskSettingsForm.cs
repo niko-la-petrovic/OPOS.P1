@@ -57,7 +57,7 @@ namespace OPOS.P1.WinForms
             maxCoresNumericUpDown.Enabled = parallelizeCheckBox.Checked;
         }
 
-        private void inputFilesAddButton_Click(object sender, EventArgs e)
+        private void InputFilesAddButton_Click(object sender, EventArgs e)
         {
             using var openFileDialog = new OpenFileDialog();
             openFileDialog.Filter = "Wav Files (*.wav)|*.wav|All files (*.*)|*.*";
@@ -74,7 +74,7 @@ namespace OPOS.P1.WinForms
             }
         }
 
-        private void inputFilesRemoveButton_Click(object sender, EventArgs e)
+        private void InputFilesRemoveButton_Click(object sender, EventArgs e)
         {
             if (inputFilesListBox.SelectedItems.Count <= 0)
                 return;
@@ -89,17 +89,17 @@ namespace OPOS.P1.WinForms
             }
         }
 
-        private void inputFilesClearButton_Click(object sender, EventArgs e)
+        private void InputFilesClearButton_Click(object sender, EventArgs e)
         {
             inputFilesListBox.Items.Clear();
         }
 
-        private void cancelButton_Click(object sender, EventArgs e)
+        private void CancelButton_Click(object sender, EventArgs e)
         {
             Close();
         }
 
-        private void okButton_Click(object sender, EventArgs e)
+        private void OkButton_Click(object sender, EventArgs e)
         {
             if(inputFilesListBox.Items.Count == 0)
             {
@@ -120,9 +120,9 @@ namespace OPOS.P1.WinForms
                 .Select(i => new CustomResourceFile ((string)i))
                 .ToArray();
 
-            var resourceList = ImmutableList.Create<CustomResource>(resourceFiles);
+            var files = ImmutableList.Create(resourceFiles);
 
-            var task = new FftTask(settings, resourceList);
+            var task = new FftTask(settings, files);
             var evt = new TaskSettingsSelectedEventArgs { Task = task };
             OnTaskSettingsSelected(evt);
 

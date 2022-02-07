@@ -191,7 +191,7 @@
             this.inputFilesAddButton.TabIndex = 14;
             this.inputFilesAddButton.Text = "Add";
             this.inputFilesAddButton.UseVisualStyleBackColor = true;
-            this.inputFilesAddButton.Click += new System.EventHandler(this.inputFilesAddButton_Click);
+            this.inputFilesAddButton.Click += new System.EventHandler(this.InputFilesAddButton_Click);
             // 
             // inputFilesRemoveButton
             // 
@@ -201,7 +201,7 @@
             this.inputFilesRemoveButton.TabIndex = 15;
             this.inputFilesRemoveButton.Text = "Remove";
             this.inputFilesRemoveButton.UseVisualStyleBackColor = true;
-            this.inputFilesRemoveButton.Click += new System.EventHandler(this.inputFilesRemoveButton_Click);
+            this.inputFilesRemoveButton.Click += new System.EventHandler(this.InputFilesRemoveButton_Click);
             // 
             // inputFilesClearButton
             // 
@@ -211,7 +211,7 @@
             this.inputFilesClearButton.TabIndex = 16;
             this.inputFilesClearButton.Text = "Clear";
             this.inputFilesClearButton.UseVisualStyleBackColor = true;
-            this.inputFilesClearButton.Click += new System.EventHandler(this.inputFilesClearButton_Click);
+            this.inputFilesClearButton.Click += new System.EventHandler(this.InputFilesClearButton_Click);
             // 
             // okButton
             // 
@@ -221,7 +221,7 @@
             this.okButton.TabIndex = 17;
             this.okButton.Text = "Ok";
             this.okButton.UseVisualStyleBackColor = true;
-            this.okButton.Click += new System.EventHandler(this.okButton_Click);
+            this.okButton.Click += new System.EventHandler(this.OkButton_Click);
             // 
             // cancelButton
             // 
@@ -231,7 +231,7 @@
             this.cancelButton.TabIndex = 18;
             this.cancelButton.Text = "Cancel";
             this.cancelButton.UseVisualStyleBackColor = true;
-            this.cancelButton.Click += new System.EventHandler(this.cancelButton_Click);
+            this.cancelButton.Click += new System.EventHandler(this.CancelButton_Click);
             // 
             // FftTaskSettingsForm
             // 

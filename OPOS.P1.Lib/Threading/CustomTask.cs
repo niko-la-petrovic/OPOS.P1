@@ -124,9 +124,14 @@ namespace OPOS.P1.Lib.Threading
         {
             Settings = customTaskSettings ?? throw new ArgumentNullException(nameof(customTaskSettings));
 
-            if (Settings.MaxCores == 0)
-                Settings = Settings with { MaxCores = Environment.ProcessorCount };
-            else if (Settings.MaxCores < 0) throw new ArgumentOutOfRangeException(nameof(customTaskSettings));
+            if (Settings.Parallelize)
+            {
+                if (Settings.MaxCores == 0)
+                    Settings = Settings with { MaxCores = Environment.ProcessorCount };
+                else if (Settings.MaxCores < 0) throw new ArgumentOutOfRangeException(nameof(customTaskSettings));
+            }
+            else
+                Settings = Settings with { MaxCores = 1 };
 
             State = state;
             Run = runAction;

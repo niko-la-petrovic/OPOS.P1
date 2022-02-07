@@ -9,6 +9,9 @@ using static OPOS.P1.Lib.Threading.CustomScheduler;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using System.Linq;
+using System.Threading;
+using System.Drawing;
 
 namespace OPOS.P1.WinForms
 {
@@ -18,10 +21,11 @@ namespace OPOS.P1.WinForms
         private static extern bool AllocConsole();
 
         private CustomScheduler scheduler;
+        private readonly EventForm eventLogForm = new EventForm();
 
         private int idLabelWidth = 0;
-        private ConcurrentDictionary<Guid, TaskControl> taskControls = new();
-        private ConcurrentDictionary<Guid, CustomTask> overviewTasks = new();
+        private readonly ConcurrentDictionary<Guid, TaskControl> taskControls = new();
+        private readonly ConcurrentDictionary<Guid, CustomTask> overviewTasks = new();
         public EventHandler<CustomTaskSettingsEventArgs> TaskSettingsSelected;
 
         public class CustomTaskSettingsEventArgs
@@ -38,7 +42,18 @@ namespace OPOS.P1.WinForms
             InitializeComponent();
 
             InitializeComponentDefaults();
+            InitializeEventLogForm();
             InitializeScheduler();
+        }
+
+        private void InitializeEventLogForm()
+        {
+            eventLogForm.Show();
+        }
+
+        private void WriteEventLog(string line)
+        {
+            eventLogForm.WriteEventLog(line);
         }
 
         private void InitializeComponentDefaults()
@@ -113,7 +128,9 @@ namespace OPOS.P1.WinForms
                     return;
                 }
 
-                taskControl.ProgressLabel.Invoke(() => taskControl.ProgressLabel.Text = e.Progress.ToString());
+                InterruptSafeInvoke(() => WriteEventLog($"{e.Task.Id}: {e.Task.Status} {e.Task.WantsToRun} {e.Task.Progress} {e.Task.Exception}"));
+
+                InterruptSafeInvoke(() => taskControl.ProgressLabel.Invoke(() => taskControl.ProgressLabel.Text = e.Progress.ToString()));
             });
             return handler;
         }
@@ -122,7 +139,6 @@ namespace OPOS.P1.WinForms
         {
             var handler = new EventHandler<TaskStatusEventArgs>((object s, TaskStatusEventArgs e) =>
             {
-                //MessageBox.Show($"{e.Task.Id} {e.Status} {e.WantsToRun}", "Status Updated", MessageBoxButtons.OK);
                 var taskControl = taskControls.GetValueOrDefault(e.Task.Id);
                 if (taskControl is null)
                 {
@@ -130,20 +146,37 @@ namespace OPOS.P1.WinForms
                     return;
                 }
 
-                taskControl.TaskStatusLabel.Invoke(() => taskControl.TaskStatusLabel.Text = e.Status.ToString());
-                taskControl.WantsToRunLabel.Invoke(() => taskControl.WantsToRunLabel.Text = e.WantsToRun.ToString());
+                // Log events
+                //MessageBox.Show($"{e.Task.Id} {e.Status} {e.WantsToRun}", "Status Updated", MessageBoxButtons.OK);
+                InterruptSafeInvoke(() => WriteEventLog($"{e.Task.Id}: {e.Status} {e.WantsToRun} {e.Task.Progress} {e.Task.Exception}"));
+
+                if (e.Status == TaskStatus.Faulted)
+                    InterruptSafeInvoke(() => taskControl.ShowExceptionMessageButton.Invoke(() => taskControl.ShowExceptionMessageButton.Enabled = true));
+
+                InterruptSafeInvoke(() => taskControl.TaskStatusLabel.Invoke(() => taskControl.TaskStatusLabel.Text = e.Status.ToString()));
+                InterruptSafeInvoke(() => taskControl.WantsToRunLabel.Invoke(() => taskControl.WantsToRunLabel.Text = e.WantsToRun.ToString()));
             });
             return handler;
         }
 
+        public static void InterruptSafeInvoke(Action action)
+        {
+            try
+            {
+                action();
+            }
+            catch (ThreadInterruptedException) { }
+        }
+
         public class TaskControl
         {
-            private FlowLayoutPanel control = new FlowLayoutPanel
+            private FlowLayoutPanel control = new()
             {
                 AutoSize = true,
                 FlowDirection = FlowDirection.LeftToRight,
                 Margin = new Padding { Left = 3, Bottom = 10 },
             };
+
             public TaskControl(CustomTask task)
             {
                 InitializeComponent(task);
@@ -154,7 +187,7 @@ namespace OPOS.P1.WinForms
                 Layout.Name = task.Id.ToString();
 
                 IdLabel = new Label { Text = task.Id.ToString() };
-                TaskStatusLabel = new Label { Text = task.Status.ToString() };
+                TaskStatusLabel = new Label { Text = task.Status.ToString(), Margin = new Padding { Right = 2 } };
                 PriorityLabel = new Label { Text = task.Settings.Priority.ToString() };
                 WantsToRunLabel = new Label { Text = task.WantsToRun.ToString() };
                 ProgressLabel = new Label { Text = task.Progress.ToString() };
@@ -165,7 +198,7 @@ namespace OPOS.P1.WinForms
                 CancelButton = new Button { Text = "Cancel" };
                 PauseButton = new Button { Text = "Pause" };
                 ShowSerializedStateButton = new Button { Text = "JSON State" };
-                ShowExceptionMessageButton = new Button { Text = "Exception" };
+                ShowExceptionMessageButton = new Button { Text = "Exception", Enabled = false };
 
                 StartButton.Click += TaskStartButton_Click(task);
                 CancelButton.Click += TaskCancelButton_Click(task);
@@ -311,7 +344,7 @@ namespace OPOS.P1.WinForms
         {
             return (s, e) =>
             {
-                MessageBox.Show($"{task.Id}: {task.Serialize<FftTaskState>()}", "JSON Task State", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show($"{task.Id}: {task.Serialize<FftCompoundTaskState>()}", "JSON Task State", MessageBoxButtons.OK, MessageBoxIcon.Information);
             };
         }
 
@@ -329,6 +362,14 @@ namespace OPOS.P1.WinForms
                 return;
             }
 
+            if (scheduler.ActiveTasks == 0 && scheduler.GetScheduledTasks().Count() > 0)
+            {
+                MessageBox.Show("There are unfinished tasks.", "Scheduler Create Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            ClearFinishedTasks();
+
             int maxConcurrentTasks = (int)maxConcurrencyNumericUpDown.Value;
             int maxCores = (int)maxCoresNumericUpDown.Value;
             scheduler = new CustomScheduler(new CustomSchedulerSettings { MaxConcurrentTasks = maxConcurrentTasks, MaxCores = maxCores });
@@ -341,6 +382,11 @@ namespace OPOS.P1.WinForms
 
         private void ClearFinishedTasksButton_Click(object sender, EventArgs e)
         {
+            ClearFinishedTasks();
+        }
+
+        private void ClearFinishedTasks()
+        {
             foreach (var item in taskControls)
             {
                 var task = overviewTasks.GetValueOrDefault(item.Key);
@@ -350,6 +396,17 @@ namespace OPOS.P1.WinForms
                     taskControls.Remove(task.Id, out _);
                     overviewTasks.Remove(task.Id, out _);
                 }
+            }
+        }
+
+        private void StartUnstartedTasksButton_Click(object sender, EventArgs e)
+        {
+            var createdTasks = scheduler.GetScheduledTasks()
+                .Where(t => t.Status is TaskStatus.Created);
+
+            foreach (var task in createdTasks)
+            {
+                task.Start();
             }
         }
     }
