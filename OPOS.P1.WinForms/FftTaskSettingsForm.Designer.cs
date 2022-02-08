@@ -82,6 +82,7 @@
             0,
             0,
             0});
+            this.priorityNumericUpDown.ValueChanged += new System.EventHandler(this.PriorityNumericUpDown_ValueChanged);
             // 
             // deadlineDateTimePicker
             // 
@@ -152,6 +153,7 @@
             0,
             0,
             0});
+            this.maxCoresNumericUpDown.ValueChanged += new System.EventHandler(this.MaxCoresNumericUpDown_ValueChanged);
             // 
             // parallelizeCheckBox
             // 

@@ -46,7 +46,11 @@ namespace OPOS.P1.WinForms
             this.startUnstartedTasksButton = new System.Windows.Forms.Button();
             this.schedulerControlsGroupBox = new System.Windows.Forms.GroupBox();
             this.currentInfoGroupBox = new System.Windows.Forms.GroupBox();
+            this.unterminatedTasksTextBox = new System.Windows.Forms.TextBox();
+            this.unterminatedTasksLabel = new System.Windows.Forms.Label();
             this.taskOverviewGroupBox = new System.Windows.Forms.GroupBox();
+            this.restoreStateButton = new System.Windows.Forms.Button();
+            this.saveStateButton = new System.Windows.Forms.Button();
             ((System.ComponentModel.ISupportInitialize)(this.maxCoresNumericUpDown)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.maxConcurrencyNumericUpDown)).BeginInit();
             this.schedulerSettingsPanel.SuspendLayout();
@@ -150,18 +154,18 @@ namespace OPOS.P1.WinForms
             // 
             // currentCoresTextBox
             // 
-            this.currentCoresTextBox.Enabled = false;
             this.currentCoresTextBox.Location = new System.Drawing.Point(49, 22);
             this.currentCoresTextBox.Name = "currentCoresTextBox";
+            this.currentCoresTextBox.ReadOnly = true;
             this.currentCoresTextBox.Size = new System.Drawing.Size(31, 23);
             this.currentCoresTextBox.TabIndex = 8;
             this.currentCoresTextBox.Text = "3";
             // 
             // currentConcurrencyTextBox
             // 
-            this.currentConcurrencyTextBox.Enabled = false;
             this.currentConcurrencyTextBox.Location = new System.Drawing.Point(192, 22);
             this.currentConcurrencyTextBox.Name = "currentConcurrencyTextBox";
+            this.currentConcurrencyTextBox.ReadOnly = true;
             this.currentConcurrencyTextBox.Size = new System.Drawing.Size(56, 23);
             this.currentConcurrencyTextBox.TabIndex = 9;
             this.currentConcurrencyTextBox.Text = "3";
@@ -178,12 +182,14 @@ namespace OPOS.P1.WinForms
             // 
             // taskControlsGroupBox
             // 
+            this.taskControlsGroupBox.Controls.Add(this.saveStateButton);
+            this.taskControlsGroupBox.Controls.Add(this.restoreStateButton);
             this.taskControlsGroupBox.Controls.Add(this.startUnstartedTasksButton);
             this.taskControlsGroupBox.Controls.Add(this.createTaskButton);
             this.taskControlsGroupBox.Controls.Add(this.clearFinishedTasksButton);
             this.taskControlsGroupBox.Location = new System.Drawing.Point(12, 83);
             this.taskControlsGroupBox.Name = "taskControlsGroupBox";
-            this.taskControlsGroupBox.Size = new System.Drawing.Size(360, 59);
+            this.taskControlsGroupBox.Size = new System.Drawing.Size(549, 59);
             this.taskControlsGroupBox.TabIndex = 11;
             this.taskControlsGroupBox.TabStop = false;
             this.taskControlsGroupBox.Text = "Task Controls";
@@ -210,16 +216,36 @@ namespace OPOS.P1.WinForms
             // 
             // currentInfoGroupBox
             // 
+            this.currentInfoGroupBox.Controls.Add(this.unterminatedTasksTextBox);
+            this.currentInfoGroupBox.Controls.Add(this.unterminatedTasksLabel);
             this.currentInfoGroupBox.Controls.Add(this.currentCoreCountLabel);
             this.currentInfoGroupBox.Controls.Add(this.curentConcurrencyLabel);
             this.currentInfoGroupBox.Controls.Add(this.currentCoresTextBox);
             this.currentInfoGroupBox.Controls.Add(this.currentConcurrencyTextBox);
             this.currentInfoGroupBox.Location = new System.Drawing.Point(518, 12);
             this.currentInfoGroupBox.Name = "currentInfoGroupBox";
-            this.currentInfoGroupBox.Size = new System.Drawing.Size(447, 65);
+            this.currentInfoGroupBox.Size = new System.Drawing.Size(440, 65);
             this.currentInfoGroupBox.TabIndex = 13;
             this.currentInfoGroupBox.TabStop = false;
             this.currentInfoGroupBox.Text = "Current Info";
+            // 
+            // unterminatedTasksTextBox
+            // 
+            this.unterminatedTasksTextBox.Location = new System.Drawing.Point(370, 19);
+            this.unterminatedTasksTextBox.Name = "unterminatedTasksTextBox";
+            this.unterminatedTasksTextBox.ReadOnly = true;
+            this.unterminatedTasksTextBox.Size = new System.Drawing.Size(56, 23);
+            this.unterminatedTasksTextBox.TabIndex = 11;
+            this.unterminatedTasksTextBox.Text = "0";
+            // 
+            // unterminatedTasksLabel
+            // 
+            this.unterminatedTasksLabel.AutoSize = true;
+            this.unterminatedTasksLabel.Location = new System.Drawing.Point(254, 19);
+            this.unterminatedTasksLabel.Name = "unterminatedTasksLabel";
+            this.unterminatedTasksLabel.Size = new System.Drawing.Size(110, 15);
+            this.unterminatedTasksLabel.TabIndex = 10;
+            this.unterminatedTasksLabel.Text = "Unterminated Tasks";
             // 
             // taskOverviewGroupBox
             // 
@@ -230,6 +256,26 @@ namespace OPOS.P1.WinForms
             this.taskOverviewGroupBox.TabIndex = 14;
             this.taskOverviewGroupBox.TabStop = false;
             this.taskOverviewGroupBox.Text = "Task Overview";
+            // 
+            // restoreStateButton
+            // 
+            this.restoreStateButton.Location = new System.Drawing.Point(355, 22);
+            this.restoreStateButton.Name = "restoreStateButton";
+            this.restoreStateButton.Size = new System.Drawing.Size(95, 23);
+            this.restoreStateButton.TabIndex = 12;
+            this.restoreStateButton.Text = "Restore State";
+            this.restoreStateButton.UseVisualStyleBackColor = true;
+            this.restoreStateButton.Click += new System.EventHandler(this.RestoreStateButton_Click);
+            // 
+            // saveStateButton
+            // 
+            this.saveStateButton.Location = new System.Drawing.Point(456, 22);
+            this.saveStateButton.Name = "saveStateButton";
+            this.saveStateButton.Size = new System.Drawing.Size(75, 23);
+            this.saveStateButton.TabIndex = 13;
+            this.saveStateButton.Text = "Save State";
+            this.saveStateButton.UseVisualStyleBackColor = true;
+            this.saveStateButton.Click += new System.EventHandler(this.SaveStateButton_Click);
             // 
             // MainForm
             // 
@@ -275,6 +321,10 @@ namespace OPOS.P1.WinForms
         private System.Windows.Forms.GroupBox currentInfoGroupBox;
         private System.Windows.Forms.GroupBox taskOverviewGroupBox;
         private System.Windows.Forms.Button startUnstartedTasksButton;
+        private System.Windows.Forms.Label unterminatedTasksLabel;
+        private System.Windows.Forms.TextBox unterminatedTasksTextBox;
+        private System.Windows.Forms.Button saveStateButton;
+        private System.Windows.Forms.Button restoreStateButton;
     }
 }
 

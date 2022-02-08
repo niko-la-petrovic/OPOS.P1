@@ -6,6 +6,7 @@ using System.Linq;
 using Xunit;
 using static Plotly.NET.ImageExport.ChartExtensions;
 using static AR.P2.Algo.Operations;
+using static AR.P2.Algo.AlgorithmTestsExtensions;
 using Xunit.Abstractions;
 using System.Text.Json;
 using AR.P2.Manager.Services;
@@ -13,55 +14,6 @@ using System.Collections.Generic;
 
 namespace OPOS.P1.Lib.Test
 {
-    public static class AlgorithmTestsExtensions
-    {
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="fftResults"></param>
-        /// <remarks>Cooley Tukey works such that the second half of the resulting spectral components is mirror reflection of the first half. Thus, only half of the resulting spectral components contain all the information.</remarks>
-        /// <returns></returns>
-        public static IEnumerable<FftResult> UsefulFftResults(this IEnumerable<FftResult> fftResults)
-        {
-            var halvedResults = fftResults.Select(res =>
-            {
-                return new FftResult
-                {
-                    WindowSize = res.WindowSize,
-                    SamplingRate = res.SamplingRate,
-                    SpectralComponents = res.SpectralComponents
-                        .Take(res.SpectralComponents.Count / 2).ToList()
-                };
-            });
-
-            return halvedResults;
-        }
-
-        public static void TestFftResults(
-            this IEnumerable<FftResult> fftResults,
-            out IEnumerable<FftResult> usefulFftResults,
-            out IEnumerable<double> relativeErrors,
-            out bool allWithinMargin)
-        {
-            usefulFftResults = fftResults.UsefulFftResults();
-            relativeErrors = usefulFftResults.Select(RelativeError());
-            allWithinMargin = relativeErrors.Select(res => res <= AlgorithmTests.MaxRelativeError)
-                .All(s => s);
-        }
-
-        public static Func<FftResult, double> RelativeError()
-        {
-            return res =>
-            {
-                var max = res.SpectralComponents.Max();
-                var diff = AlgorithmTests.Frequency - max.Frequency;
-                var relativeError = Math.Abs(diff / AlgorithmTests.Frequency);
-
-                return relativeError;
-            };
-        }
-    }
-
     public class AlgorithmTests
     {
         private readonly ITestOutputHelper output;
@@ -127,7 +79,7 @@ namespace OPOS.P1.Lib.Test
 
             Algo.Fft.FftSequential(signal, WindowSize, SamplingRate, out var fftResults);
 
-            fftResults.TestFftResults(out var usefulFftResults, out var relativeErrors, out var allWithinMargin);
+            fftResults.TestFftResults(MaxRelativeError, Frequency, out var usefulFftResults, out var relativeErrors, out var allWithinMargin);
             var chart = GetFftResultsChart(usefulFftResults);
             SaveFftResults(inputFile, "sequential", chart);
 
@@ -146,7 +98,7 @@ namespace OPOS.P1.Lib.Test
 
             var fftResults = kvps.Select(kvp => kvp.Value);
 
-            fftResults.TestFftResults(out var usefulFftResults, out var relativeErrors, out var allWithinMargin);
+            fftResults.TestFftResults(MaxRelativeError, Frequency, out var usefulFftResults, out var relativeErrors, out var allWithinMargin);
 
             var chart = GetFftResultsChart(usefulFftResults);
             SaveFftResults(inputFile, "parallel-inner", chart);
@@ -164,7 +116,12 @@ namespace OPOS.P1.Lib.Test
 
             Algo.Fft.FftParallel(signal, WindowSize, SamplingRate, out var fftResults);
 
-            fftResults.TestFftResults(out var usefulFftResults, out var relativeErrors, out var allWithinMargin);
+            fftResults.TestFftResults(MaxRelativeError, Frequency, out var usefulFftResults, out var relativeErrors, out var allWithinMargin);
+
+            foreach (var error in relativeErrors)
+            {
+                output.WriteLine(error.ToString());
+            }
 
             var chart = GetFftResultsChart(usefulFftResults);
             SaveFftResults(inputFile, "parallel", chart);

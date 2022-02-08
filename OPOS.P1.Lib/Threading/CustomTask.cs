@@ -199,11 +199,7 @@ namespace OPOS.P1.Lib.Threading
             Scheduler.UpdateTaskStatus(this, TaskStatus.Canceled);
         }
 
-        public string Serialize<TState>() where TState : ICustomTaskState
-        {
-            var json = JsonSerializer.Serialize((TState)State);
-            return json;
-        }
+        public abstract string Serialize();
 
         public abstract CustomTask Deserialize(string json);
 

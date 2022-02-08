@@ -11,6 +11,6 @@ namespace OPOS.P1.Lib.Threading
         TaskStatus Status { get; }
 
         CustomTask Deserialize(string json);
-        string Serialize<T>() where T : ICustomTaskState;
+        string Serialize();
     }
 }

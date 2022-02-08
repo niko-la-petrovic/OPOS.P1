@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
 using Xunit.Abstractions;
+using static OPOS.P1.Lib.Test.CustomSchedulerTests.CustomTaskOperationsTests;
 using static OPOS.P1.Lib.Threading.CustomScheduler;
 using static OPOS.P1.Lib.Threading.CustomTaskStatusComparer;
 
@@ -29,6 +30,11 @@ namespace OPOS.P1.Lib.Test
         public override CustomTask Deserialize(string json)
         {
             throw new NotImplementedException();
+        }
+
+        public override string Serialize()
+        {
+            return JsonSerializer.Serialize(State, typeof(SumState));
         }
     }
 
@@ -411,7 +417,7 @@ namespace OPOS.P1.Lib.Test
                         },
                         customTaskSettings: customTaskSettings));
 
-                var serialized = task.Serialize<SumState>();
+                var serialized = task.Serialize();
                 output.WriteLine(serialized);
                 Assert.Equal(JsonSerializer.Serialize(new SumState { Value = 0 }), serialized);
 
@@ -420,13 +426,13 @@ namespace OPOS.P1.Lib.Test
 
                 Assert.Equal(1, actionRunCount);
                 Assert.Equal(TaskStatus.Running, task.Status);
-                output.WriteLine(task.Serialize<SumState>());
+                output.WriteLine(task.Serialize());
 
                 task.Pause();
                 Thread.Sleep(500);
 
                 var state = task.State as SumState;
-                var serializedState = task.Serialize<SumState>();
+                var serializedState = task.Serialize();
                 output.WriteLine(serializedState);
                 Assert.Equal(1, actionRunCount);
                 Assert.Equal(TaskStatus.Created, task.Status);
@@ -435,7 +441,7 @@ namespace OPOS.P1.Lib.Test
                 task.Continue();
                 Thread.Sleep(250);
 
-                output.WriteLine(task.Serialize<SumState>());
+                output.WriteLine(task.Serialize());
                 Assert.Equal(3, state.Value);
                 Assert.Equal(TaskStatus.Running, task.Status);
             }
@@ -774,7 +780,7 @@ namespace OPOS.P1.Lib.Test
                         },
                         customTaskSettings: customTaskSettings));
 
-                var serialized = task.Serialize<SumState>();
+                var serialized = task.Serialize();
                 output.WriteLine(serialized);
                 Assert.Equal(JsonSerializer.Serialize((object)null), serialized);
             }
@@ -816,14 +822,14 @@ namespace OPOS.P1.Lib.Test
                         },
                         customTaskSettings: customTaskSettings));
 
-                var serialized = task.Serialize<SumState>();
+                var serialized = task.Serialize();
                 output.WriteLine(serialized);
                 Assert.Equal(JsonSerializer.Serialize(new SumState { Value = 0 }), serialized);
 
                 task.Start();
                 Thread.Sleep(1000);
 
-                var serializedState = task.Serialize<SumState>();
+                var serializedState = task.Serialize();
                 output.WriteLine(serializedState);
             }
 
@@ -858,7 +864,7 @@ namespace OPOS.P1.Lib.Test
                         state: initialState,
                         customTaskSettings: customTaskSettings));
 
-                var serialized = task.Serialize<SumState>();
+                var serialized = task.Serialize();
                 output.WriteLine(serialized);
                 Assert.Equal(JsonSerializer.Serialize(new SumState { Value = 20 }), serialized);
 

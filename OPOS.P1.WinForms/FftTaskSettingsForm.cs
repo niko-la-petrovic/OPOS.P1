@@ -18,6 +18,11 @@ namespace OPOS.P1.WinForms
     {
         private readonly CustomSchedulerSettings _settings;
 
+        private static bool parallelize = false;
+        private static bool priorityScheduling = true;
+        private static int priority = 3;
+        private static int maxCores = 3;
+
         public FftTaskSettingsForm(CustomSchedulerSettings settings)
         {
             _settings = settings;
@@ -30,7 +35,7 @@ namespace OPOS.P1.WinForms
         private void SetComponentDefaults()
         {
             // TODO remove
-            inputFilesListBox.Items.Add(@"C:\Users\Blue-Glass\source\repos\OPOS.P1\OPOS.P1.Lib.Test\input_2s_800hz_44100_mono_16b.wav");
+            inputFilesListBox.Items.Add(@"C:\Users\Blue-Glass\source\repos\OPOS.P1\OPOS.P1.Lib.Test\input_64s_800hz_44100_mono_16b.wav");
 
             deadlineDateTimePicker.Value = DateTime.Now.AddMinutes(2);
             deadlineMillisNumericUpDown.Value = (decimal)TimeSpan.FromMinutes(2).TotalMilliseconds;
@@ -44,17 +49,27 @@ namespace OPOS.P1.WinForms
 
             maxCoresNumericUpDown.Enabled = parallelizeCheckBox.Checked;
             parallelizeCheckBox.CheckedChanged += ParallelizeCheckBox_CheckedChanged;
+
+            // static
+            parallelizeCheckBox.Checked = parallelize;
+            prioritySchedulingCheckBox.Checked = priorityScheduling;
+            priorityNumericUpDown.Value = priority;
+            maxCoresNumericUpDown.Value = maxCores;
         }
 
         private void PrioritySchedulingCheckBox_CheckedChanged(object sender, EventArgs e)
         {
             priorityNumericUpDown.Enabled = prioritySchedulingCheckBox.Checked;
             priorityNumericUpDown.Value = prioritySchedulingCheckBox.Checked ? _settings.MaxCores : 0;
+            // static
+            priorityScheduling = prioritySchedulingCheckBox.Checked;
         }
 
         private void ParallelizeCheckBox_CheckedChanged(object sender, EventArgs e)
         {
             maxCoresNumericUpDown.Enabled = parallelizeCheckBox.Checked;
+            // static
+            parallelize = parallelizeCheckBox.Checked;
         }
 
         private void InputFilesAddButton_Click(object sender, EventArgs e)
@@ -101,10 +116,10 @@ namespace OPOS.P1.WinForms
 
         private void OkButton_Click(object sender, EventArgs e)
         {
-            if(inputFilesListBox.Items.Count == 0)
+            if (inputFilesListBox.Items.Count == 0)
             {
-                MessageBox.Show("No input files selected.","File Selection Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return; 
+                MessageBox.Show("No input files selected.", "File Selection Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
             }
 
             var settings = new CustomTaskSettings
@@ -117,7 +132,7 @@ namespace OPOS.P1.WinForms
             };
 
             var resourceFiles = inputFilesListBox.Items.OfType<object>()
-                .Select(i => new CustomResourceFile ((string)i))
+                .Select(i => new CustomResourceFile((string)i))
                 .ToArray();
 
             var files = ImmutableList.Create(resourceFiles);
@@ -127,6 +142,18 @@ namespace OPOS.P1.WinForms
             OnTaskSettingsSelected(evt);
 
             Close();
+        }
+
+        private void PriorityNumericUpDown_ValueChanged(object sender, EventArgs e)
+        {
+            // static
+            priority = (int)priorityNumericUpDown.Value;
+        }
+
+        private void MaxCoresNumericUpDown_ValueChanged(object sender, EventArgs e)
+        {
+            // static
+            maxCores = (int)maxCoresNumericUpDown.Value;
         }
     }
 }

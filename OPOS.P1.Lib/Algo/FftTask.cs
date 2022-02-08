@@ -75,63 +75,73 @@ namespace OPOS.P1.Lib.Algo
                 using var linkedCancellationToken = CancellationTokenSource.CreateLinkedTokenSource(cToken.CancellationToken, cToken.PauseToken);
                 var localToken = linkedCancellationToken.Token;
 
-                localToken.ThrowIfCancellationRequested();
+                try
+                {
+                    localToken.ThrowIfCancellationRequested();
 
-                PreProcessResources(state, linkedCancellationToken.Token);
+                    PreProcessResources(state, linkedCancellationToken.Token);
 
-                localToken.ThrowIfCancellationRequested();
+                    localToken.ThrowIfCancellationRequested();
 
-                ParallelizedResources(linkedCancellationToken.Token)
-                    .ForAll(i =>
-                    {
-                        var fftTaskState = state.FftTaskSubStates[i];
-                        if (fftTaskState.Results is null)
+                    ParallelizedResources(linkedCancellationToken.Token)
+                        .ForAll(i =>
                         {
-                            fftTaskState.Results = FftProcessResource(i, state, Settings, linkedCancellationToken.Token);
-                        }
-                    });
-
-                localToken.ThrowIfCancellationRequested();
-
-                ParallelizedResources(linkedCancellationToken.Token)
-                    .ForAll(i =>
-                    {
-                        var fftTaskState = state.FftTaskSubStates[i];
-                        if (!fftTaskState.WrittenToFile)
-                        {
-                            bool noException = true;
-                            try
+                            var fftTaskState = state.FftTaskSubStates[i];
+                            if (fftTaskState.Results is null)
                             {
-                                LockResourceAndAct(fftTaskState.OutputFilePath, () =>
+                                fftTaskState.Results = FftProcessResource(i, state, Settings, linkedCancellationToken.Token);
+                            }
+                        });
+
+                    localToken.ThrowIfCancellationRequested();
+
+                    ParallelizedResources(linkedCancellationToken.Token)
+                        .ForAll(i =>
+                        {
+                            var fftTaskState = state.FftTaskSubStates[i];
+                            if (!fftTaskState.WrittenToFile)
+                            {
+                                bool noException = true;
+                                try
                                 {
-                                    using var fs = File.OpenWrite(fftTaskState.OutputFilePath);
-                                    using var writer = new StreamWriter(fs);
-
-                                    foreach (var res in fftTaskState.Results)
+                                    LockResourceAndAct(fftTaskState.OutputFilePath, () =>
                                     {
-                                        foreach (var specComp in res.SpectralComponents)
+                                        using var fs = File.OpenWrite(fftTaskState.OutputFilePath);
+                                        using var writer = new StreamWriter(fs);
+
+                                        foreach (var res in fftTaskState.Results)
                                         {
-                                            writer.WriteLine($"{specComp.Frequency},{specComp.Magnitude}");
+                                            foreach (var specComp in res.SpectralComponents)
+                                            {
+                                                writer.WriteLine($"{specComp.Frequency},{specComp.Magnitude}");
+                                            }
                                         }
-                                    }
-                                });
+                                    });
+                                }
+                                catch (Exception)
+                                {
+                                    noException = false;
+                                    throw;
+                                }
+                                finally
+                                {
+                                    if (noException)
+                                        fftTaskState.WrittenToFile = true;
+                                }
                             }
-                            catch (Exception)
-                            {
-                                noException = false;
-                                throw;
-                            }
-                            finally
-                            {
-                                if (noException)
-                                    fftTaskState.WrittenToFile = true;
-                            }
-                        }
-                    });
+                        });
 
-                Progress = 100;
+                    Progress = 100;
 
-                localToken.ThrowIfCancellationRequested();
+                    localToken.ThrowIfCancellationRequested();
+                }
+                catch (OperationCanceledException)
+                {
+                    if (cToken.PauseToken.IsCancellationRequested)
+                        cToken.ThrowIfPauseRequested();
+                    if (cToken.CancellationToken.IsCancellationRequested)
+                        cToken.CancellationToken.ThrowIfCancellationRequested();
+                }
             };
         }
 
@@ -262,11 +272,22 @@ namespace OPOS.P1.Lib.Algo
             JsonSerializer.Deserialize<FftCompoundTaskState>(json);
             throw new NotImplementedException();
         }
+
+        public override string Serialize()
+        {
+            // TODO add extra info except the task state - task status, 
+            return JsonSerializer.Serialize(State, typeof(FftCompoundTaskState));
+        }
     }
 
     public class FftCompoundTaskState : ICustomTaskState
     {
         public List<FftTaskState> FftTaskSubStates { get; set; } = new();
+    }
+
+    public class SerializedFftTask
+    {
+
     }
 
     public class FftTaskState : ICustomTaskState

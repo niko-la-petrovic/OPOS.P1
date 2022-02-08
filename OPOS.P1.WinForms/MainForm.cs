@@ -12,6 +12,8 @@ using System.Threading.Tasks;
 using System.Linq;
 using System.Threading;
 using System.Drawing;
+using System.IO;
+using System.Text.Json;
 
 namespace OPOS.P1.WinForms
 {
@@ -20,6 +22,7 @@ namespace OPOS.P1.WinForms
         [DllImport("kernel32.dll")]
         private static extern bool AllocConsole();
 
+        private const string pathPrefix = "OPOS_P1";
         private CustomScheduler scheduler;
         private readonly EventForm eventLogForm = new EventForm();
 
@@ -33,6 +36,13 @@ namespace OPOS.P1.WinForms
             public CustomTaskSettings Settings { get; set; }
         }
 
+        public class ApplicationState
+        {
+            public CustomSchedulerSettings SchedulerSettings { get; set; }
+            public Dictionary<string, string> SerializedTasks { get; set; } = new();
+            public int UnterminatedTaskCount { get; set; }
+        }
+
         public MainForm()
         {
             AllocConsole();
@@ -44,6 +54,25 @@ namespace OPOS.P1.WinForms
             InitializeComponentDefaults();
             InitializeEventLogForm();
             InitializeScheduler();
+
+            // TODO check autosave
+            Application.ApplicationExit += Application_ApplicationExit;
+        }
+
+        private void Application_ApplicationExit(object sender, EventArgs e)
+        {
+            var serializedTasks = scheduler.GetScheduledTasks().Select(t => new KeyValuePair<string, string>(t.Id.ToString(), t.Serialize()));
+            var appState = new ApplicationState
+            {
+                SchedulerSettings = scheduler.Settings,
+                SerializedTasks = new Dictionary<string, string>(serializedTasks),
+                UnterminatedTaskCount = Convert.ToInt32(unterminatedTasksLabel.Text),
+            };
+
+            var jsonAppState = JsonSerializer.Serialize(appState);
+            var saveDirPath = GetSaveDirectoryPath();
+            var saveFilePath = Path.Combine(saveDirPath, $"autosave_{pathPrefix}.json");
+            throw new NotImplementedException();
         }
 
         private void InitializeEventLogForm()
@@ -131,6 +160,7 @@ namespace OPOS.P1.WinForms
                 InterruptSafeInvoke(() => WriteEventLog($"{e.Task.Id}: {e.Task.Status} {e.Task.WantsToRun} {e.Task.Progress} {e.Task.Exception}"));
 
                 InterruptSafeInvoke(() => taskControl.ProgressLabel.Invoke(() => taskControl.ProgressLabel.Text = e.Progress.ToString()));
+
             });
             return handler;
         }
@@ -155,6 +185,7 @@ namespace OPOS.P1.WinForms
 
                 InterruptSafeInvoke(() => taskControl.TaskStatusLabel.Invoke(() => taskControl.TaskStatusLabel.Text = e.Status.ToString()));
                 InterruptSafeInvoke(() => taskControl.WantsToRunLabel.Invoke(() => taskControl.WantsToRunLabel.Text = e.WantsToRun.ToString()));
+                UpdateUnterminatedTaskCount();
             });
             return handler;
         }
@@ -293,6 +324,21 @@ namespace OPOS.P1.WinForms
             taskOverviewFlowLayoutPanel.Controls.Add(taskLayout);
             overviewTasks.TryAdd(task.Id, task);
             taskControls.TryAdd(task.Id, taskControl);
+            UpdateUnterminatedTaskCount();
+        }
+
+        private void UpdateUnterminatedTaskCount()
+        {
+            InterruptSafeInvoke(() =>
+            {
+                var unterminatedTaskCount = GetUnterminatedTaskCount();
+                unterminatedTasksTextBox.Invoke(() => unterminatedTasksTextBox.Text = unterminatedTaskCount.ToString());
+            });
+        }
+
+        private int GetUnterminatedTaskCount()
+        {
+            return scheduler.GetUnterminatedTaskCount();
         }
 
         private static EventHandler TaskPauseButton_Click(CustomTask task)
@@ -344,7 +390,7 @@ namespace OPOS.P1.WinForms
         {
             return (s, e) =>
             {
-                MessageBox.Show($"{task.Id}: {task.Serialize<FftCompoundTaskState>()}", "JSON Task State", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show($"{task.Id}: {task.Serialize()}", "JSON Task State", MessageBoxButtons.OK, MessageBoxIcon.Information);
             };
         }
 
@@ -364,7 +410,7 @@ namespace OPOS.P1.WinForms
 
             if (scheduler.ActiveTasks == 0 && scheduler.GetScheduledTasks().Count() > 0)
             {
-                MessageBox.Show("There are unfinished tasks.", "Scheduler Create Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("There are unterminated tasks.", "Scheduler Create Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
@@ -397,6 +443,7 @@ namespace OPOS.P1.WinForms
                     overviewTasks.Remove(task.Id, out _);
                 }
             }
+            UpdateUnterminatedTaskCount();
         }
 
         private void StartUnstartedTasksButton_Click(object sender, EventArgs e)
@@ -408,6 +455,31 @@ namespace OPOS.P1.WinForms
             {
                 task.Start();
             }
+        }
+
+        private static string GetSaveDirectoryPath() => Path.Join(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), pathPrefix).ToString();
+
+        private static string GetLastSavedFilePath()
+        {
+            var dirInfo = new DirectoryInfo(GetSaveDirectoryPath());
+            var files = dirInfo.GetFiles($"{pathPrefix}*.json");
+            var lastFile = files.OrderByDescending(f => f.CreationTime).FirstOrDefault();
+            return lastFile.FullName;
+        }
+
+        private void RestoreStateButton_Click(object sender, EventArgs e)
+        {
+            var lastFilePath = GetLastSavedFilePath();
+
+            var json = File.ReadAllText(lastFilePath);
+            // TODO deserialize to tasks
+            throw new NotImplementedException();
+        }
+
+        private void SaveStateButton_Click(object sender, EventArgs e)
+        {
+
+            throw new NotImplementedException();
         }
     }
 }

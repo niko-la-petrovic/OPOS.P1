@@ -574,7 +574,8 @@ namespace OPOS.P1.Lib.Threading
                     OnTaskStatusChanged(new TaskStatusEventArgs { Task = nextTask, Status = nextTask.Status, WantsToRun = nextTask.WantsToRun });
                 }
                 // TODO handle interrupt
-                catch (ThreadInterruptedException ex) {
+                catch (ThreadInterruptedException ex)
+                {
                     nextTask.Exception = new AggregateException(ex);
                     OnTaskStatusChanged(new TaskStatusEventArgs { Task = nextTask, Status = nextTask.Status, WantsToRun = nextTask.WantsToRun });
                 }
@@ -702,13 +703,6 @@ namespace OPOS.P1.Lib.Threading
                 var pairX = scheduler.threadTasks.FirstOrDefault(pair => pair.Value == x);
                 var pairY = scheduler.threadTasks.FirstOrDefault(pair => pair.Value == y);
 
-                // TODO if pairX is null, then less
-                //if (pairX.Value is null)
-                //    return -1;
-
-                //if (pairY.Value is null)
-                //    return 1;
-
                 return -CustomTaskComparer.CompareTasks(pairX.Key, pairY.Key);
             }
         }
@@ -719,6 +713,11 @@ namespace OPOS.P1.Lib.Threading
                 .Select(c => c.Element)
                 .ToImmutableSortedSet(new CustomTaskComparer())
                 .AsEnumerable();
+        }
+
+        public int GetUnterminatedTaskCount()
+        {
+            return GetScheduledTasks().Count(t => t.Status is TaskStatus.Created or TaskStatus.Running or TaskStatus.WaitingForActivation) + threadTasks.Count(t => t.Key.Status is TaskStatus.Running or TaskStatus.Created or TaskStatus.WaitingForActivation);
         }
 
         protected virtual void OnTaskStatusChanged(TaskStatusEventArgs e)
