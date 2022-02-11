@@ -148,7 +148,7 @@ namespace OPOS.P1.WinForms
                 }
                 catch (Exception ex)
                 {
-
+                    MessageBox.Show($"{ex.Message}: {ex.StackTrace}", "Error Restoring Auto Save", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
 

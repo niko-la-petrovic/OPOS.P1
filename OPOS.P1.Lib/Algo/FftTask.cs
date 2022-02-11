@@ -28,14 +28,20 @@ namespace OPOS.P1.Lib.Algo
         {
         }
 
-        //public FftTask(
-        //    Action<ICustomTaskState, CustomCancellationToken> runAction,
-        //    ICustomTaskState state = null,
-        //    CustomTaskSettings customTaskSettings = default,
-        //    ImmutableList<CustomResource> customResources = null,
-        //    CustomScheduler scheduler = null) : base(runAction, state, customTaskSettings, customResources, scheduler)
-        //{
-        //}
+        // Serialization constructor
+        public FftTask(
+            Action<ICustomTaskState, CustomCancellationToken> runAction,
+            ICustomTaskState state = null,
+            CustomTaskSettings customTaskSettings = default,
+            ImmutableList<CustomResource> customResources = null,
+            CustomScheduler scheduler = null) : base(runAction, state, customTaskSettings, customResources, scheduler)
+        {
+            inputFiles = ImmutableList
+                .Create(customResources.Where(f => f.Uri.EndsWith(".wav"))
+                .Select(r => new CustomResourceFile(r.Uri)).ToArray());
+
+            Run = RunAction();
+        }
 
         public FftTask(
             CustomTaskSettings customTaskSettings = null,
@@ -288,14 +294,13 @@ namespace OPOS.P1.Lib.Algo
 
         public override FftTask Deserialize(string json)
         {
-            DeserializeWithSavedTask(json, out var savedTask);
+            var task = DeserializeWithSavedTask(json, out var savedTask) as FftTask;
 
             var stateJson = savedTask.DerivedSerializedState;
             var state = JsonSerializer.Deserialize<FftCompoundTaskState>(stateJson);
-            State = state;
-            Run = RunAction();
+            task.State = state;
 
-            return this;
+            return task;
         }
     }
 
