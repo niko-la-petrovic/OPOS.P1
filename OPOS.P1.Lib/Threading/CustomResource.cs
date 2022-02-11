@@ -1,16 +1,19 @@
 ﻿using System;
 using System.IO;
+using System.Text.Json.Serialization;
 
 namespace OPOS.P1.Lib.Threading
 {
-    public abstract class CustomResource
+    public class CustomResource
     {
         public string Uri { get; init; }
 
-        public CustomResource(string uri)
+        public CustomResource()
         {
-            Uri = uri;
+
         }
+
+        public CustomResource(string uri) => Uri = uri;
 
         public override bool Equals(object obj)
         {

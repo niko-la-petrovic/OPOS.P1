@@ -14,6 +14,7 @@ using System.Threading;
 using System.Drawing;
 using System.IO;
 using System.Text.Json;
+using System.Diagnostics;
 
 namespace OPOS.P1.WinForms
 {
@@ -23,23 +24,35 @@ namespace OPOS.P1.WinForms
         private static extern bool AllocConsole();
 
         private const string pathPrefix = "OPOS_P1";
+        private const string autoSavePrefix = "autosave_" + pathPrefix;
         private CustomScheduler scheduler;
         private readonly EventForm eventLogForm = new EventForm();
 
         private int idLabelWidth = 0;
+        private const double autosaveMillis = 5000;
         private readonly ConcurrentDictionary<Guid, TaskControl> taskControls = new();
         private readonly ConcurrentDictionary<Guid, CustomTask> overviewTasks = new();
         public EventHandler<CustomTaskSettingsEventArgs> TaskSettingsSelected;
+        private readonly System.Timers.Timer timer = new(TimeSpan.FromMilliseconds(autosaveMillis).TotalMilliseconds);
+        private bool autosave = false;
+
+        public CustomScheduler Scheduler { get => scheduler; set => scheduler = value; }
 
         public class CustomTaskSettingsEventArgs
         {
             public CustomTaskSettings Settings { get; set; }
         }
 
+        public class SerializedTask
+        {
+            public string TaskId { get; set; }
+            public string TaskSettings { get; set; }
+        }
+
         public class ApplicationState
         {
             public CustomSchedulerSettings SchedulerSettings { get; set; }
-            public Dictionary<string, string> SerializedTasks { get; set; } = new();
+            public List<string> SavedTasks { get; set; } = new();
             public int UnterminatedTaskCount { get; set; }
         }
 
@@ -55,24 +68,91 @@ namespace OPOS.P1.WinForms
             InitializeEventLogForm();
             InitializeScheduler();
 
-            // TODO check autosave
-            Application.ApplicationExit += Application_ApplicationExit;
+            Task.Run(() =>
+            {
+                Thread.Sleep(500);
+                OfferApplicationRestore();
+            });
+            FormClosed += MainForm_FormClosed;
+            timer.Elapsed += AutoSave;
+            HandleAutosaveTimer();
         }
 
-        private void Application_ApplicationExit(object sender, EventArgs e)
+        private void AutoSave(object sender, EventArgs e)
         {
-            var serializedTasks = scheduler.GetScheduledTasks().Select(t => new KeyValuePair<string, string>(t.Id.ToString(), t.Serialize()));
+            var serializedTasks = Scheduler.GetScheduledTasks().Select(t => t.Serialize());
             var appState = new ApplicationState
             {
-                SchedulerSettings = scheduler.Settings,
-                SerializedTasks = new Dictionary<string, string>(serializedTasks),
-                UnterminatedTaskCount = Convert.ToInt32(unterminatedTasksLabel.Text),
+                SchedulerSettings = Scheduler.Settings,
+                SavedTasks = serializedTasks.ToList(),
+                UnterminatedTaskCount = GetUnterminatedTaskCount(),
             };
 
             var jsonAppState = JsonSerializer.Serialize(appState);
+
             var saveDirPath = GetSaveDirectoryPath();
-            var saveFilePath = Path.Combine(saveDirPath, $"autosave_{pathPrefix}.json");
-            throw new NotImplementedException();
+            var saveFilePath = Path.Combine(saveDirPath, $"{autoSavePrefix}.json");
+
+            File.WriteAllText(saveFilePath, jsonAppState);
+        }
+
+        private void MainForm_FormClosed(object sender, FormClosedEventArgs e)
+        {
+            timer.Stop();
+
+            //var autosavePath = GetLastAutoSaveFilePath();
+            //if (!string.IsNullOrWhiteSpace(autosavePath))
+            //    File.Delete(autosavePath);
+
+            Environment.Exit(0);
+
+        }
+
+        private void OfferApplicationRestore()
+        {
+            var autoSavePath = GetLastAutoSaveFilePath();
+            if (string.IsNullOrWhiteSpace(autoSavePath))
+                return;
+
+            var dialogResult = MessageBox.Show("Would you like to restore the last saved app state?", "Auto-Save Restore", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (dialogResult is DialogResult.No)
+                return;
+
+            var json = File.ReadAllText(autoSavePath);
+            var appState = JsonSerializer.Deserialize<ApplicationState>(json);
+
+            if (appState.SchedulerSettings is null)
+                return;
+
+            Scheduler = new CustomScheduler(appState.SchedulerSettings);
+            unterminatedTasksTextBox.Invoke(() => unterminatedTasksTextBox.Text = appState.UnterminatedTaskCount.ToString());
+
+            foreach (var savedTaskJson in appState.SavedTasks)
+            {
+                try
+                {
+                    var savedTask = JsonSerializer.Deserialize<SavedTask>(savedTaskJson);
+                    var taskType = Type.GetType(savedTask.AssemblyQualifiedName);
+                    if (taskType is null)
+                        continue;
+
+                    if (!taskType.IsAssignableTo(typeof(CustomTask)))
+                        continue;
+
+                    var ctor = taskType.GetConstructor(Array.Empty<Type>());
+                    var customTask = ctor.Invoke(null) as CustomTask;
+
+                    customTask = customTask.Deserialize(savedTaskJson);
+
+                    TaskSettingsForm_TaskSettingsSelected(this, new TaskSettingsSelectedEventArgs { Task = customTask });
+                }
+                catch (Exception ex)
+                {
+
+                }
+            }
+
+            InitializeSchedulerComponents(Scheduler.Settings);
         }
 
         private void InitializeEventLogForm()
@@ -127,14 +207,14 @@ namespace OPOS.P1.WinForms
 
         private void InitializeScheduler()
         {
-            scheduler = new CustomScheduler(
+            Scheduler = new CustomScheduler(
                 new CustomSchedulerSettings
                 {
                     MaxConcurrentTasks = (int)maxCoresNumericUpDown.Value,
                     MaxCores = (int)maxCoresNumericUpDown.Value,
                 });
 
-            SetSchedulerEventHandlers(scheduler);
+            SetSchedulerEventHandlers(Scheduler);
         }
 
         private void SetSchedulerEventHandlers(CustomScheduler scheduler)
@@ -314,14 +394,15 @@ namespace OPOS.P1.WinForms
         {
             var task = e.Task;
 
-            scheduler.PrepareTask(task);
+            Scheduler.PrepareTask(task);
 
             var taskControl = new TaskControl(e.Task);
             var taskLayout = taskControl.Layout;
             {
                 taskControl.IdLabel.Width = idLabelWidth;
             }
-            taskOverviewFlowLayoutPanel.Controls.Add(taskLayout);
+            taskOverviewFlowLayoutPanel.Invoke(() =>
+                taskOverviewFlowLayoutPanel.Controls.Add(taskLayout));
             overviewTasks.TryAdd(task.Id, task);
             taskControls.TryAdd(task.Id, taskControl);
             UpdateUnterminatedTaskCount();
@@ -338,7 +419,7 @@ namespace OPOS.P1.WinForms
 
         private int GetUnterminatedTaskCount()
         {
-            return scheduler.GetUnterminatedTaskCount();
+            return Scheduler.GetUnterminatedTaskCount();
         }
 
         private static EventHandler TaskPauseButton_Click(CustomTask task)
@@ -396,19 +477,19 @@ namespace OPOS.P1.WinForms
 
         private TaskSettingsForm GetFftTaskSettingsForm()
         {
-            var fftSettingsForm = new FftTaskSettingsForm(scheduler.Settings);
+            var fftSettingsForm = new FftTaskSettingsForm(Scheduler.Settings);
             return fftSettingsForm;
         }
 
         private void CreateSchedulerButton_Click(object sender, EventArgs e)
         {
-            if (scheduler is not null && scheduler.ActiveTasks != 0)
+            if (Scheduler is not null && Scheduler.ActiveTasks != 0)
             {
                 MessageBox.Show("There are still ongoing tasks.", "Scheduler Create Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
 
-            if (scheduler.ActiveTasks == 0 && scheduler.GetScheduledTasks().Count() > 0)
+            if (Scheduler.ActiveTasks == 0 && Scheduler.GetScheduledTasks().Count() > 0)
             {
                 MessageBox.Show("There are unterminated tasks.", "Scheduler Create Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
@@ -418,9 +499,17 @@ namespace OPOS.P1.WinForms
 
             int maxConcurrentTasks = (int)maxConcurrencyNumericUpDown.Value;
             int maxCores = (int)maxCoresNumericUpDown.Value;
-            scheduler = new CustomScheduler(new CustomSchedulerSettings { MaxConcurrentTasks = maxConcurrentTasks, MaxCores = maxCores });
 
-            SetSchedulerEventHandlers(scheduler);
+            InitializeSchedulerComponents(new CustomSchedulerSettings { MaxCores = maxCores, MaxConcurrentTasks = maxConcurrentTasks });
+        }
+
+        private void InitializeSchedulerComponents(CustomSchedulerSettings settings)
+        {
+            int maxConcurrentTasks = settings.MaxConcurrentTasks;
+            int maxCores = settings.MaxCores;
+            Scheduler = new CustomScheduler(new CustomSchedulerSettings { MaxConcurrentTasks = maxConcurrentTasks, MaxCores = maxCores });
+
+            SetSchedulerEventHandlers(Scheduler);
 
             currentConcurrencyTextBox.Text = maxConcurrentTasks.ToString();
             currentCoresTextBox.Text = maxCores.ToString();
@@ -448,7 +537,7 @@ namespace OPOS.P1.WinForms
 
         private void StartUnstartedTasksButton_Click(object sender, EventArgs e)
         {
-            var createdTasks = scheduler.GetScheduledTasks()
+            var createdTasks = Scheduler.GetScheduledTasks()
                 .Where(t => t.Status is TaskStatus.Created);
 
             foreach (var task in createdTasks)
@@ -462,9 +551,21 @@ namespace OPOS.P1.WinForms
         private static string GetLastSavedFilePath()
         {
             var dirInfo = new DirectoryInfo(GetSaveDirectoryPath());
+            if (!dirInfo.Exists)
+                dirInfo.Create();
             var files = dirInfo.GetFiles($"{pathPrefix}*.json");
             var lastFile = files.OrderByDescending(f => f.CreationTime).FirstOrDefault();
-            return lastFile.FullName;
+            return lastFile?.FullName;
+        }
+
+        private static string GetLastAutoSaveFilePath()
+        {
+            var dirInfo = new DirectoryInfo(GetSaveDirectoryPath());
+            if (!dirInfo.Exists)
+                dirInfo.Create();
+            var files = dirInfo.GetFiles($"{autoSavePrefix}*.json");
+            var lastFile = files.OrderByDescending(f => f.CreationTime).FirstOrDefault();
+            return lastFile?.FullName;
         }
 
         private void RestoreStateButton_Click(object sender, EventArgs e)
@@ -480,6 +581,25 @@ namespace OPOS.P1.WinForms
         {
 
             throw new NotImplementedException();
+        }
+
+        private void OpenSavesButton_Click(object sender, EventArgs e)
+        {
+            Process.Start(new ProcessStartInfo(GetSaveDirectoryPath()) { UseShellExecute = true });
+        }
+
+        private void HandleAutosaveTimer()
+        {
+            if (autosave)
+                timer.Start();
+            else
+                timer.Stop();
+        }
+
+        private void AutosaveCheckBox_CheckedChanged(object sender, EventArgs e)
+        {
+            autosave = autosaveCheckBox.Checked;
+            HandleAutosaveTimer();
         }
     }
 }

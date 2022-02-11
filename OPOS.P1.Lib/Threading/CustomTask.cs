@@ -18,6 +18,17 @@ namespace OPOS.P1.Lib.Threading
         }
     }
 
+    public class SavedTask
+    {
+        public string AssemblyQualifiedName { get; set; }
+        public string Id { get; set; }
+        public bool WantsToRun { get; set; }
+        public TaskStatus Status { get; set; }
+        public CustomTaskSettings Settings { get; set; }
+        public CustomResource[] CustomResources { get; set; }
+        public string DerivedSerializedState { get; set; }
+    }
+
     /// <summary>
     /// CustomTask comparer that use uses task priority only.
     /// </summary>
@@ -89,7 +100,7 @@ namespace OPOS.P1.Lib.Threading
 
         internal CustomScheduler Scheduler { get; set; }
 
-        public Guid Id { get; init; } = Guid.NewGuid();
+        public Guid Id { get; private set; } = Guid.NewGuid();
 
         public CustomTaskSettings Settings { get; init; }
 
@@ -112,15 +123,14 @@ namespace OPOS.P1.Lib.Threading
 
         public AggregateException Exception { get; internal set; }
 
-        internal ImmutableList<CustomResource> CustomResources { get; set; }
+        public ImmutableList<CustomResource> CustomResources { get; internal set; }
 
         public CustomTask(
             Action<ICustomTaskState, CustomCancellationToken> runAction,
             ICustomTaskState state = default,
             CustomTaskSettings customTaskSettings = default,
-            //CustomCancellationToken cancellationToken = default,
             ImmutableList<CustomResource> customResources = null,
-            CustomScheduler scheduler = null) /*: base(() => runAction(state, cancellationToken))*/
+            CustomScheduler scheduler = null)
         {
             Settings = customTaskSettings ?? throw new ArgumentNullException(nameof(customTaskSettings));
 
@@ -143,11 +153,9 @@ namespace OPOS.P1.Lib.Threading
 
         int ICustomTask.Priority => Settings.Priority;
 
-        public new Action<ICustomTaskState, CustomCancellationToken> Run { internal get; init; }
+        internal Action<ICustomTaskState, CustomCancellationToken> Run { get; set; }
 
-        public Action<ICustomTaskState, CustomCancellationToken> Resume { internal get; init; }
-
-        public new void Start()
+        public void Start()
         {
             if (Status != TaskStatus.Created)
                 throw new InvalidOperationException($"Task must be in steate {TaskStatus.Created}.");
@@ -199,9 +207,73 @@ namespace OPOS.P1.Lib.Threading
             Scheduler.UpdateTaskStatus(this, TaskStatus.Canceled);
         }
 
-        public abstract string Serialize();
+        public virtual string Serialize()
+        {
+            var stateJson = JsonSerializer.Serialize(State, State.GetType());
 
-        public abstract CustomTask Deserialize(string json);
+            var savedState = new SavedTask
+            {
+                Id = Id.ToString(),
+                DerivedSerializedState = stateJson,
+                Settings = Settings,
+                WantsToRun = WantsToRun,
+                Status = Status,
+                AssemblyQualifiedName = GetType().AssemblyQualifiedName,
+                CustomResources = new List<CustomResource>(CustomResources).ToArray(),
+            };
+
+            var json = JsonSerializer.Serialize(savedState);
+
+            return json;
+        }
+
+        public static SavedTask GetSavedTask(string json)
+        {
+            var savedTask = JsonSerializer.Deserialize<SavedTask>(json);
+            return savedTask;
+        }
+
+        public static CustomTask DeserializeWithSavedTask(string json, out SavedTask savedTask)
+        {
+            savedTask = GetSavedTask(json);
+
+            var type = Type.GetType(savedTask.AssemblyQualifiedName);
+            if (type is null)
+                throw new InvalidOperationException(nameof(savedTask.AssemblyQualifiedName));
+
+            if (!type.IsAssignableTo(typeof(CustomTask)))
+                throw new InvalidOperationException(nameof(savedTask.AssemblyQualifiedName));
+
+            // TODO make it so that the ctors have the same arguments
+            var ctor = type.GetConstructor(new[] {
+                typeof(Action<ICustomTaskState, CustomCancellationToken>),
+                typeof(ICustomTaskState),
+                typeof(CustomTaskSettings),
+                typeof(ImmutableList<CustomResource>),
+                typeof(CustomScheduler)
+            });
+
+            var customTask = ctor.Invoke(new object[] {
+                null,
+                null,
+                savedTask.Settings,
+                ImmutableList.Create(savedTask.CustomResources),
+                null
+            })
+                as CustomTask;
+            if (customTask is null)
+                throw new ArgumentException(nameof(json));
+
+            customTask.Id = new Guid(savedTask.Id);
+            customTask.WantsToRun = savedTask.WantsToRun;
+
+            return customTask;
+        }
+
+        public virtual CustomTask Deserialize(string json)
+        {
+            return DeserializeWithSavedTask(json, out _);
+        }
 
         public override bool Equals(object obj)
         {

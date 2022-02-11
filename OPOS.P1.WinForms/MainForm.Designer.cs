@@ -43,14 +43,16 @@ namespace OPOS.P1.WinForms
             this.currentConcurrencyTextBox = new System.Windows.Forms.TextBox();
             this.clearFinishedTasksButton = new System.Windows.Forms.Button();
             this.taskControlsGroupBox = new System.Windows.Forms.GroupBox();
+            this.openSavesButton = new System.Windows.Forms.Button();
+            this.saveStateButton = new System.Windows.Forms.Button();
+            this.restoreStateButton = new System.Windows.Forms.Button();
             this.startUnstartedTasksButton = new System.Windows.Forms.Button();
             this.schedulerControlsGroupBox = new System.Windows.Forms.GroupBox();
             this.currentInfoGroupBox = new System.Windows.Forms.GroupBox();
             this.unterminatedTasksTextBox = new System.Windows.Forms.TextBox();
             this.unterminatedTasksLabel = new System.Windows.Forms.Label();
             this.taskOverviewGroupBox = new System.Windows.Forms.GroupBox();
-            this.restoreStateButton = new System.Windows.Forms.Button();
-            this.saveStateButton = new System.Windows.Forms.Button();
+            this.autosaveCheckBox = new System.Windows.Forms.CheckBox();
             ((System.ComponentModel.ISupportInitialize)(this.maxCoresNumericUpDown)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.maxConcurrencyNumericUpDown)).BeginInit();
             this.schedulerSettingsPanel.SuspendLayout();
@@ -182,6 +184,8 @@ namespace OPOS.P1.WinForms
             // 
             // taskControlsGroupBox
             // 
+            this.taskControlsGroupBox.Controls.Add(this.autosaveCheckBox);
+            this.taskControlsGroupBox.Controls.Add(this.openSavesButton);
             this.taskControlsGroupBox.Controls.Add(this.saveStateButton);
             this.taskControlsGroupBox.Controls.Add(this.restoreStateButton);
             this.taskControlsGroupBox.Controls.Add(this.startUnstartedTasksButton);
@@ -189,10 +193,40 @@ namespace OPOS.P1.WinForms
             this.taskControlsGroupBox.Controls.Add(this.clearFinishedTasksButton);
             this.taskControlsGroupBox.Location = new System.Drawing.Point(12, 83);
             this.taskControlsGroupBox.Name = "taskControlsGroupBox";
-            this.taskControlsGroupBox.Size = new System.Drawing.Size(549, 59);
+            this.taskControlsGroupBox.Size = new System.Drawing.Size(754, 59);
             this.taskControlsGroupBox.TabIndex = 11;
             this.taskControlsGroupBox.TabStop = false;
             this.taskControlsGroupBox.Text = "Task Controls";
+            // 
+            // openSavesButton
+            // 
+            this.openSavesButton.Location = new System.Drawing.Point(537, 22);
+            this.openSavesButton.Name = "openSavesButton";
+            this.openSavesButton.Size = new System.Drawing.Size(92, 23);
+            this.openSavesButton.TabIndex = 14;
+            this.openSavesButton.Text = "Open Saves";
+            this.openSavesButton.UseVisualStyleBackColor = true;
+            this.openSavesButton.Click += new System.EventHandler(this.OpenSavesButton_Click);
+            // 
+            // saveStateButton
+            // 
+            this.saveStateButton.Location = new System.Drawing.Point(456, 22);
+            this.saveStateButton.Name = "saveStateButton";
+            this.saveStateButton.Size = new System.Drawing.Size(75, 23);
+            this.saveStateButton.TabIndex = 13;
+            this.saveStateButton.Text = "Save State";
+            this.saveStateButton.UseVisualStyleBackColor = true;
+            this.saveStateButton.Click += new System.EventHandler(this.SaveStateButton_Click);
+            // 
+            // restoreStateButton
+            // 
+            this.restoreStateButton.Location = new System.Drawing.Point(355, 22);
+            this.restoreStateButton.Name = "restoreStateButton";
+            this.restoreStateButton.Size = new System.Drawing.Size(95, 23);
+            this.restoreStateButton.TabIndex = 12;
+            this.restoreStateButton.Text = "Restore State";
+            this.restoreStateButton.UseVisualStyleBackColor = true;
+            this.restoreStateButton.Click += new System.EventHandler(this.RestoreStateButton_Click);
             // 
             // startUnstartedTasksButton
             // 
@@ -257,25 +291,16 @@ namespace OPOS.P1.WinForms
             this.taskOverviewGroupBox.TabStop = false;
             this.taskOverviewGroupBox.Text = "Task Overview";
             // 
-            // restoreStateButton
+            // autosaveCheckBox
             // 
-            this.restoreStateButton.Location = new System.Drawing.Point(355, 22);
-            this.restoreStateButton.Name = "restoreStateButton";
-            this.restoreStateButton.Size = new System.Drawing.Size(95, 23);
-            this.restoreStateButton.TabIndex = 12;
-            this.restoreStateButton.Text = "Restore State";
-            this.restoreStateButton.UseVisualStyleBackColor = true;
-            this.restoreStateButton.Click += new System.EventHandler(this.RestoreStateButton_Click);
-            // 
-            // saveStateButton
-            // 
-            this.saveStateButton.Location = new System.Drawing.Point(456, 22);
-            this.saveStateButton.Name = "saveStateButton";
-            this.saveStateButton.Size = new System.Drawing.Size(75, 23);
-            this.saveStateButton.TabIndex = 13;
-            this.saveStateButton.Text = "Save State";
-            this.saveStateButton.UseVisualStyleBackColor = true;
-            this.saveStateButton.Click += new System.EventHandler(this.SaveStateButton_Click);
+            this.autosaveCheckBox.AutoSize = true;
+            this.autosaveCheckBox.Location = new System.Drawing.Point(635, 25);
+            this.autosaveCheckBox.Name = "autosaveCheckBox";
+            this.autosaveCheckBox.Size = new System.Drawing.Size(79, 19);
+            this.autosaveCheckBox.TabIndex = 15;
+            this.autosaveCheckBox.Text = "Auto Save";
+            this.autosaveCheckBox.UseVisualStyleBackColor = true;
+            this.autosaveCheckBox.CheckedChanged += new System.EventHandler(this.AutosaveCheckBox_CheckedChanged);
             // 
             // MainForm
             // 
@@ -293,6 +318,7 @@ namespace OPOS.P1.WinForms
             this.schedulerSettingsPanel.ResumeLayout(false);
             this.schedulerSettingsPanel.PerformLayout();
             this.taskControlsGroupBox.ResumeLayout(false);
+            this.taskControlsGroupBox.PerformLayout();
             this.schedulerControlsGroupBox.ResumeLayout(false);
             this.currentInfoGroupBox.ResumeLayout(false);
             this.currentInfoGroupBox.PerformLayout();
@@ -325,6 +351,8 @@ namespace OPOS.P1.WinForms
         private System.Windows.Forms.TextBox unterminatedTasksTextBox;
         private System.Windows.Forms.Button saveStateButton;
         private System.Windows.Forms.Button restoreStateButton;
+        private System.Windows.Forms.Button openSavesButton;
+        private System.Windows.Forms.CheckBox autosaveCheckBox;
     }
 }
 

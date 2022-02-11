@@ -1,4 +1,5 @@
 ﻿using DokanNet;
+using DokanNet.Logging;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -24,6 +25,36 @@ namespace OPOS.P1.Lib.FileSystem
         public FileAttributes FileAttributes { get; set; }
 
         public abstract FileInformation FileInformation { get; }
+
+        public string MountPoint { get; set; }
+
+        public string FullName
+        {
+            get
+            {
+                var item = this;
+
+                var pathStack = new Stack<IFsItem>();
+                pathStack.Push(this);
+
+                while (item?.Parent is not null)
+                {
+                    var parent = item.Parent;
+                    pathStack.Push(parent);
+
+                    item = parent;
+                }
+
+                var rootDir = pathStack.Pop() as Directory;
+
+                var pathStackItems = new LinkedList<string>(pathStack.Select(i => i.Name));
+                pathStackItems.AddFirst(rootDir.MountPoint);
+
+                var fullName = string.Join(Path.DirectorySeparatorChar, pathStackItems.ToArray());
+
+                return fullName;
+            }
+        }
 
         public override string ToString()
         {
@@ -224,7 +255,7 @@ namespace OPOS.P1.Lib.FileSystem
                 if (parent is null || string.IsNullOrWhiteSpace(itemName))
                     return null;
 
-                var dirToList = parent.Children.First(c => c.Name == itemName) as Directory;
+                var dirToList = parent.Children.First(c => c is Directory && c.Name == itemName) as Directory;
                 children = dirToList.Children;
             }
 
@@ -487,6 +518,12 @@ namespace OPOS.P1.Lib.FileSystem
             return NtStatus.Success;
         }
 
+        public void Mount(DokanOptions mountOptions, string mountPoint, int threadCount, ILogger logger = null)
+        {
+            rootDirectory.MountPoint = mountPoint.Replace("\\", "");
+            this.Mount(mountPoint, mountOptions, threadCount, logger);
+        }
+
         public NtStatus MoveFile(string oldFilePath, string newFilePath, bool replace, IDokanFileInfo info)
         {
             FindItemParent(oldFilePath, out var oldParent, out var itemName);
@@ -600,7 +637,8 @@ namespace OPOS.P1.Lib.FileSystem
             };
             info.Context = fileOpEvent;
 
-            if (fileWriteTimers.TryGetValue(file, out var timer)){
+            if (fileWriteTimers.TryGetValue(file, out var timer))
+            {
                 timer.Stop();
                 timer.Dispose();
                 fileWriteTimers.TryRemove(file, out _);

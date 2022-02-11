@@ -24,6 +24,19 @@ namespace OPOS.P1.Lib.Algo
 
         private ImmutableList<CustomResourceFile> inputFiles;
 
+        public FftTask() : base(null, customTaskSettings: CustomTaskSettings.Default)
+        {
+        }
+
+        //public FftTask(
+        //    Action<ICustomTaskState, CustomCancellationToken> runAction,
+        //    ICustomTaskState state = null,
+        //    CustomTaskSettings customTaskSettings = default,
+        //    ImmutableList<CustomResource> customResources = null,
+        //    CustomScheduler scheduler = null) : base(runAction, state, customTaskSettings, customResources, scheduler)
+        //{
+        //}
+
         public FftTask(
             CustomTaskSettings customTaskSettings = null,
             ImmutableList<CustomResourceFile> customResources = null,
@@ -37,14 +50,16 @@ namespace OPOS.P1.Lib.Algo
                         .Cast<CustomResource>().ToArray()),
                   scheduler)
         {
-            ;
             Run = RunAction();
+            InitializeInputFiles(customResources);
+        }
 
+        private void InitializeInputFiles(ImmutableList<CustomResourceFile> customResources)
+        {
             if (inputFiles?.Count == 0)
                 throw new ArgumentException(null, nameof(customResources));
 
             inputFiles = customResources;
-
             FftCompoundTaskState fftCompoundTaskState = State as FftCompoundTaskState;
             foreach (var item in inputFiles)
             {
@@ -57,14 +72,13 @@ namespace OPOS.P1.Lib.Algo
             }
         }
 
-        private static string GetOutputFilePath(CustomResourceFile item)
+        public static string GetOutputFilePath(CustomResourceFile item)
         {
             return item.Uri.Replace(".wav", $"_output.csv");
         }
 
         public static FftCompoundTaskState DefaultState => new();
 
-        // TODO use canc token
         // TODO progress updates
         private Action<ICustomTaskState, CustomCancellationToken> RunAction()
         {
@@ -95,19 +109,21 @@ namespace OPOS.P1.Lib.Algo
 
                     localToken.ThrowIfCancellationRequested();
 
-                    ParallelizedResources(linkedCancellationToken.Token)
-                        .ForAll(i =>
-                        {
-                            var fftTaskState = state.FftTaskSubStates[i];
-                            if (!fftTaskState.WrittenToFile)
+                    LockResourcesAndAct(
+                    ImmutableList.Create(CustomResources.Where(r => !r.Uri.EndsWith(".wav")).ToArray()),
+                    () =>
+                    {
+                        ParallelizedResources(linkedCancellationToken.Token)
+                            .ForAll(i =>
                             {
-                                bool noException = true;
-                                try
+                                var fftTaskState = state.FftTaskSubStates[i];
+                                if (!fftTaskState.WrittenToFile)
                                 {
-                                    LockResourceAndAct(fftTaskState.OutputFilePath, () =>
+                                    bool noException = true;
+                                    try
                                     {
-                                        using var fs = File.OpenWrite(fftTaskState.OutputFilePath);
-                                        using var writer = new StreamWriter(fs);
+                                        using var ms = new MemoryStream();
+                                        using var writer = new StreamWriter(ms);
 
                                         foreach (var res in fftTaskState.Results)
                                         {
@@ -116,21 +132,24 @@ namespace OPOS.P1.Lib.Algo
                                                 writer.WriteLine($"{specComp.Frequency},{specComp.Magnitude}");
                                             }
                                         }
-                                    });
-                                }
-                                catch (Exception)
-                                {
-                                    noException = false;
-                                    throw;
-                                }
-                                finally
-                                {
-                                    if (noException)
-                                        fftTaskState.WrittenToFile = true;
-                                }
-                            }
-                        });
 
+                                        File.WriteAllBytes(fftTaskState.OutputFilePath, ms.ToArray());
+                                    }
+                                    catch (Exception)
+                                    {
+                                        noException = false;
+                                        throw;
+                                    }
+                                    finally
+                                    {
+                                        if (noException)
+                                            fftTaskState.WrittenToFile = true;
+                                    }
+                                }
+                            });
+                    });
+
+                    // TODO rework
                     Progress = 100;
 
                     localToken.ThrowIfCancellationRequested();
@@ -219,7 +238,7 @@ namespace OPOS.P1.Lib.Algo
             return result;
         }
 
-        // TODO progress updates
+        // TODO progress updates or leave treated as inconducive to progress?
         private void PreProcessResources(FftCompoundTaskState state, CancellationToken cToken)
         {
             if (inputFiles.Count == 1)
@@ -269,14 +288,14 @@ namespace OPOS.P1.Lib.Algo
 
         public override FftTask Deserialize(string json)
         {
-            JsonSerializer.Deserialize<FftCompoundTaskState>(json);
-            throw new NotImplementedException();
-        }
+            DeserializeWithSavedTask(json, out var savedTask);
 
-        public override string Serialize()
-        {
-            // TODO add extra info except the task state - task status, 
-            return JsonSerializer.Serialize(State, typeof(FftCompoundTaskState));
+            var stateJson = savedTask.DerivedSerializedState;
+            var state = JsonSerializer.Deserialize<FftCompoundTaskState>(stateJson);
+            State = state;
+            Run = RunAction();
+
+            return this;
         }
     }
 
