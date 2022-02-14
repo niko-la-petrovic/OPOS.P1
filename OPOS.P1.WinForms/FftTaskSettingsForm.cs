@@ -37,8 +37,8 @@ namespace OPOS.P1.WinForms
             // TODO remove
             inputFilesListBox.Items.Add(@"C:\Users\Blue-Glass\source\repos\OPOS.P1\OPOS.P1.Lib.Test\input_64s_800hz_44100_mono_16b.wav");
 
-            deadlineDateTimePicker.Value = DateTime.Now.AddMinutes(2);
-            deadlineMillisNumericUpDown.Value = (decimal)TimeSpan.FromMinutes(2).TotalMilliseconds;
+            deadlineDateTimePicker.Value = DateTime.Now.AddMinutes(10);
+            deadlineMillisNumericUpDown.Value = (decimal)TimeSpan.FromMinutes(10).TotalMilliseconds;
 
             priorityNumericUpDown.Enabled = prioritySchedulingCheckBox.Checked;
             prioritySchedulingCheckBox.CheckedChanged += PrioritySchedulingCheckBox_CheckedChanged;

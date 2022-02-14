@@ -85,7 +85,38 @@ namespace OPOS.P1.Lib.Algo
 
         public static FftCompoundTaskState DefaultState => new();
 
-        // TODO progress updates
+        public void UpdateProgress()
+        {
+            float calculatedProgress = CalculateProgress(this);
+
+            if (calculatedProgress > Progress)
+                Progress = calculatedProgress;
+        }
+
+        public static float CalculateProgress(FftTask fftTask)
+        {
+            if (fftTask.State is not FftCompoundTaskState taskState || taskState.FftTaskSubStates?.Count == 0)
+                throw new InvalidOperationException(nameof(fftTask.State));
+
+            var subStateCount = taskState.FftTaskSubStates.Count;
+
+            var summand = 1.0 / subStateCount;
+
+            var weightA = 1.0 / 3.0;
+            var weightB = 1.0 / 3.0;
+            var weightC = 1.0 / 3.0;
+
+            var weightedA = taskState.FftTaskSubStates.Select(s => s.Signal is null ? 0 : summand).Sum() * weightA;
+
+            var weightedB = taskState.FftTaskSubStates.Select(s => s.Results is null ? 0 : summand).Sum() * weightB;
+
+            var weightedC = taskState.FftTaskSubStates.Select(s => !s.WrittenToFile ? 0 : summand).Sum() * weightC;
+
+            var sum = weightedA + weightedB + weightedC;
+
+            return (float)sum * 100;
+        }
+
         private Action<ICustomTaskState, CustomCancellationToken> RunAction()
         {
             return (iState, cToken) =>
@@ -110,6 +141,7 @@ namespace OPOS.P1.Lib.Algo
                             if (fftTaskState.Results is null)
                             {
                                 fftTaskState.Results = FftProcessResource(i, state, Settings, linkedCancellationToken.Token);
+                                UpdateProgress();
                             }
                         });
 
@@ -149,14 +181,17 @@ namespace OPOS.P1.Lib.Algo
                                     finally
                                     {
                                         if (noException)
+                                        {
                                             fftTaskState.WrittenToFile = true;
+
+                                            UpdateProgress();
+                                        }
                                     }
                                 }
                             });
                     });
 
-                    // TODO rework
-                    Progress = 100;
+                    UpdateProgress();
 
                     localToken.ThrowIfCancellationRequested();
                 }
@@ -170,10 +205,6 @@ namespace OPOS.P1.Lib.Algo
             };
         }
 
-        // TODO use canc token
-        // TODO use derived type for task settings - will include FFT params instead of constants
-        // TODO progress updates
-        // TODO save state
         private static unsafe List<FftResult> FftProcessResource(
             int resourceIndex,
             FftCompoundTaskState state,
@@ -244,19 +275,22 @@ namespace OPOS.P1.Lib.Algo
             return result;
         }
 
-        // TODO progress updates or leave treated as inconducive to progress?
         private void PreProcessResources(FftCompoundTaskState state, CancellationToken cToken)
         {
             if (inputFiles.Count == 1)
             {
                 GetFileWithTaskState(state, 0, out var file, out var subState);
-                if (subState.Signal is null)
-                    LockResourceAndAct(file, () =>
-                    {
-                        using var fs = File.OpenRead(file.Uri);
+                if (subState.Signal is not null)
+                    return;
 
-                        subState.Signal = fs.GetWavSignalMono();
-                    });
+                LockResourceAndAct(file, () =>
+                {
+                    using var fs = File.OpenRead(file.Uri);
+
+                    subState.Signal = fs.GetWavSignalMono();
+                });
+
+                UpdateProgress();
             }
             else
             {
@@ -268,12 +302,14 @@ namespace OPOS.P1.Lib.Algo
                         .ForAll(i =>
                         {
                             GetFileWithTaskState(state, i, out var file, out var subState);
-                            if (subState.Signal is null)
-                            {
-                                using var fs = File.OpenRead(file.Uri);
+                            if (subState.Signal is not null)
+                                return;
 
-                                subState.Signal = fs.GetWavSignalMono();
-                            }
+                            using var fs = File.OpenRead(file.Uri);
+
+                            subState.Signal = fs.GetWavSignalMono();
+
+                            UpdateProgress();
                         });
                 });
             }
@@ -307,11 +343,6 @@ namespace OPOS.P1.Lib.Algo
     public class FftCompoundTaskState : ICustomTaskState
     {
         public List<FftTaskState> FftTaskSubStates { get; set; } = new();
-    }
-
-    public class SerializedFftTask
-    {
-
     }
 
     public class FftTaskState : ICustomTaskState

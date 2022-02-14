@@ -408,7 +408,6 @@ namespace OPOS.P1.Lib.Threading
                 taskCancellationTokenSources.Remove(customTask, out _);
 
                 var deadlineInterval = customTask.Settings.Deadline.Subtract(DateTime.Now);
-                // TODO use the remaining time, rather than the max run duration
                 var runDurationInterval = customTask.Settings.MaxRunDuration - customTask.TotalRunDuration;
                 var cancelInterval = deadlineInterval < runDurationInterval ? deadlineInterval : runDurationInterval;
                 var source = new CustomCancellationTokenSource
@@ -538,6 +537,8 @@ namespace OPOS.P1.Lib.Threading
                         OnTaskStatusChanged(new TaskStatusEventArgs { Task = nextTask, Status = nextTask.Status, WantsToRun = nextTask.WantsToRun });
                         continue;
                     }
+                    catch (ThreadInterruptedException ex) { preempted = true; }
+                    catch (AggregateException ex) { if (ex.InnerException is ThreadInterruptedException) preempted = true; }
                     catch (Exception ex)
                     {
                         nextTask.Exception = new AggregateException(ex);

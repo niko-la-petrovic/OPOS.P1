@@ -22,6 +22,7 @@ namespace OPOS.P1.Lib.Threading
     {
         public string AssemblyQualifiedName { get; set; }
         public string Id { get; set; }
+        public float Progress { get; set; }
         public bool WantsToRun { get; set; }
         public TaskStatus Status { get; set; }
         public CustomTaskSettings Settings { get; set; }
@@ -93,7 +94,7 @@ namespace OPOS.P1.Lib.Threading
 
     public abstract class CustomTask : ICustomTask, IComparable<CustomTask>, IEquatable<CustomTask>
     {
-        private float progress;
+        private volatile float progress;
 
         public bool MetDeadline { get; set; }
         public bool WantsToRun { get; set; }
@@ -109,8 +110,11 @@ namespace OPOS.P1.Lib.Threading
             get => progress;
             internal set
             {
+                if (progress == value)
+                    return;
+
                 progress = value;
-                Scheduler.OnTaskProgressChanged(new TaskProgressEventArgs { Progress = value, Task = this });
+                Scheduler?.OnTaskProgressChanged(new TaskProgressEventArgs { Progress = value, Task = this });
             }
         }
 
@@ -119,7 +123,7 @@ namespace OPOS.P1.Lib.Threading
         public DateTime LastStartedRunning { get; internal set; }
         public TimeSpan TotalRunDuration { get; internal set; }
 
-        internal ICustomTaskState State { get; set; }
+        internal virtual ICustomTaskState State { get; set; }
 
         public AggregateException Exception { get; internal set; }
 
@@ -217,6 +221,7 @@ namespace OPOS.P1.Lib.Threading
                 DerivedSerializedState = stateJson,
                 Settings = Settings,
                 WantsToRun = WantsToRun,
+                Progress = Progress,
                 Status = Status,
                 AssemblyQualifiedName = GetType().AssemblyQualifiedName,
                 CustomResources = new List<CustomResource>(CustomResources).ToArray(),
@@ -266,6 +271,7 @@ namespace OPOS.P1.Lib.Threading
 
             customTask.Id = new Guid(savedTask.Id);
             customTask.WantsToRun = savedTask.WantsToRun;
+            customTask.Progress = savedTask.Progress;
 
             return customTask;
         }

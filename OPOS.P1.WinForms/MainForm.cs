@@ -80,6 +80,14 @@ namespace OPOS.P1.WinForms
 
         private void AutoSave(object sender, EventArgs e)
         {
+            var saveDirPath = GetSaveDirectoryPath();
+            var saveFilePath = Path.Combine(saveDirPath, $"{autoSavePrefix}.json");
+
+            SaveStateToFile(saveFilePath);
+        }
+
+        private void SaveStateToFile(string saveFilePath)
+        {
             var serializedTasks = Scheduler.GetScheduledTasks().Select(t => t.Serialize());
             var appState = new ApplicationState
             {
@@ -89,9 +97,6 @@ namespace OPOS.P1.WinForms
             };
 
             var jsonAppState = JsonSerializer.Serialize(appState);
-
-            var saveDirPath = GetSaveDirectoryPath();
-            var saveFilePath = Path.Combine(saveDirPath, $"{autoSavePrefix}.json");
 
             File.WriteAllText(saveFilePath, jsonAppState);
         }
@@ -118,6 +123,11 @@ namespace OPOS.P1.WinForms
             if (dialogResult is DialogResult.No)
                 return;
 
+            RestoreSave(autoSavePath);
+        }
+
+        private void RestoreSave(string autoSavePath)
+        {
             var json = File.ReadAllText(autoSavePath);
             var appState = JsonSerializer.Deserialize<ApplicationState>(json);
 
@@ -126,6 +136,7 @@ namespace OPOS.P1.WinForms
 
             Scheduler = new CustomScheduler(appState.SchedulerSettings);
             unterminatedTasksTextBox.Invoke(() => unterminatedTasksTextBox.Text = appState.UnterminatedTaskCount.ToString());
+            InitializeSchedulerComponents();
 
             foreach (var savedTaskJson in appState.SavedTasks)
             {
@@ -152,7 +163,7 @@ namespace OPOS.P1.WinForms
                 }
             }
 
-            InitializeSchedulerComponents(Scheduler.Settings);
+            CreateNewScheduler(Scheduler.Settings);
         }
 
         private void InitializeEventLogForm()
@@ -237,9 +248,9 @@ namespace OPOS.P1.WinForms
                     return;
                 }
 
-                InterruptSafeInvoke(() => WriteEventLog($"{e.Task.Id}: {e.Task.Status} {e.Task.WantsToRun} {e.Task.Progress} {e.Task.Exception}"));
+                InterruptSafeInvoke(() => WriteEventLog($"{e.Task.Id}: {e.Task.Status} {e.Task.WantsToRun} {e.Task.Progress:F2} {e.Task.Exception}"));
 
-                InterruptSafeInvoke(() => taskControl.ProgressLabel.Invoke(() => taskControl.ProgressLabel.Text = e.Progress.ToString()));
+                InterruptSafeInvoke(() => taskControl.ProgressLabel.Invoke(() => taskControl.ProgressLabel.Text = $"{e.Progress:F2}"));
 
             });
             return handler;
@@ -500,19 +511,24 @@ namespace OPOS.P1.WinForms
             int maxConcurrentTasks = (int)maxConcurrencyNumericUpDown.Value;
             int maxCores = (int)maxCoresNumericUpDown.Value;
 
-            InitializeSchedulerComponents(new CustomSchedulerSettings { MaxCores = maxCores, MaxConcurrentTasks = maxConcurrentTasks });
+            CreateNewScheduler(new CustomSchedulerSettings { MaxCores = maxCores, MaxConcurrentTasks = maxConcurrentTasks });
         }
 
-        private void InitializeSchedulerComponents(CustomSchedulerSettings settings)
+        private void CreateNewScheduler(CustomSchedulerSettings settings)
         {
             int maxConcurrentTasks = settings.MaxConcurrentTasks;
             int maxCores = settings.MaxCores;
             Scheduler = new CustomScheduler(new CustomSchedulerSettings { MaxConcurrentTasks = maxConcurrentTasks, MaxCores = maxCores });
 
+            InitializeSchedulerComponents();
+        }
+
+        private void InitializeSchedulerComponents()
+        {
             SetSchedulerEventHandlers(Scheduler);
 
-            currentConcurrencyTextBox.Text = maxConcurrentTasks.ToString();
-            currentCoresTextBox.Text = maxCores.ToString();
+            currentConcurrencyTextBox.Text = Scheduler.Settings.MaxConcurrentTasks.ToString();
+            currentCoresTextBox.Text = Scheduler.Settings.MaxCores.ToString();
         }
 
         private void ClearFinishedTasksButton_Click(object sender, EventArgs e)
@@ -570,17 +586,31 @@ namespace OPOS.P1.WinForms
 
         private void RestoreStateButton_Click(object sender, EventArgs e)
         {
-            var lastFilePath = GetLastSavedFilePath();
+            using var openFileDialog = new OpenFileDialog();
+            openFileDialog.Filter = "Json File (*.json)|*.json|All files (*.*)|*.*";
+            openFileDialog.Title = "Select JSON file";
+            openFileDialog.CheckFileExists = true;
+            var result = openFileDialog.ShowDialog();
+            if (result != DialogResult.OK)
+                return;
 
-            var json = File.ReadAllText(lastFilePath);
-            // TODO deserialize to tasks
-            throw new NotImplementedException();
+            var filePath = openFileDialog.FileName;
+            try
+            {
+                RestoreSave(filePath);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"{ex.Message}:{ex.StackTrace}", "Error Restoring State", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
 
         private void SaveStateButton_Click(object sender, EventArgs e)
         {
+            var saveDir = GetSaveDirectoryPath();
+            var saveFilePath = Path.Join(saveDir, $"{pathPrefix}_{DateTimeOffset.Now.ToUnixTimeMilliseconds()}.json");
 
-            throw new NotImplementedException();
+            SaveStateToFile(saveFilePath);
         }
 
         private void OpenSavesButton_Click(object sender, EventArgs e)
