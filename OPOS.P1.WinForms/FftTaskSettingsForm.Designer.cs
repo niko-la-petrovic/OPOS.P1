@@ -74,6 +74,11 @@
             // priorityNumericUpDown
             // 
             this.priorityNumericUpDown.Location = new System.Drawing.Point(12, 60);
+            this.priorityNumericUpDown.Minimum = new decimal(new int[] {
+            100,
+            0,
+            0,
+            -2147483648});
             this.priorityNumericUpDown.Name = "priorityNumericUpDown";
             this.priorityNumericUpDown.Size = new System.Drawing.Size(120, 23);
             this.priorityNumericUpDown.TabIndex = 3;

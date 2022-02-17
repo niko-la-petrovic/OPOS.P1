@@ -114,6 +114,9 @@ namespace OPOS.P1.Lib.Threading
         public TCustomTask PrepareTask<TCustomTask>(TCustomTask customTask)
             where TCustomTask : CustomTask
         {
+            if (customTask.Settings.MaxCores > Settings.MaxCores)
+                customTask.Settings.MaxCores = Settings.MaxCores;
+
             customTask.Scheduler = this;
 
             if (customTask.CustomResources is not null)

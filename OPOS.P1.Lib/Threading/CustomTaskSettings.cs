@@ -12,7 +12,7 @@ namespace OPOS.P1.Lib.Threading
 
         public bool Parallelize { get; init; }
 
-        public int MaxCores { get; init; }
+        public int MaxCores { get; set; }
 
         public int Priority { get; init; }
     }
